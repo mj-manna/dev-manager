@@ -1,12 +1,10 @@
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { getConnectionById } from '../database/connectionsStorage'
 import { PostgresDataBrowser } from './PostgresDataBrowser'
 
-export function PostgresBrowserPage() {
-  const { connectionId } = useParams<{ connectionId: string }>()
+export function PostgresBrowserPage({ connectionId }: { connectionId: string }) {
   const navigate = useNavigate()
-  const decoded = connectionId ? decodeURIComponent(connectionId) : ''
-  const conn = decoded ? getConnectionById(decoded) : undefined
+  const conn = getConnectionById(connectionId)
 
   if (!conn || conn.kind !== 'postgresql') {
     return (
@@ -24,5 +22,5 @@ export function PostgresBrowserPage() {
     )
   }
 
-  return <PostgresDataBrowser connection={conn} onBack={() => navigate('/database')} />
+  return <PostgresDataBrowser connection={conn} />
 }

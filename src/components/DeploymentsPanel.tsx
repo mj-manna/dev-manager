@@ -1,5 +1,12 @@
-import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
+import { buildCommand, slotRunnable } from '../deployments/deploymentCommands'
+import {
+  PACKAGE_JSON_SELECT_INSTALL_VALUE,
+  formatPackageInstallCommand,
+  formatPackageScriptCommand,
+  packageManagerDetectionDescription,
+} from '../deployments/packageScripts'
 import {
   PROJECT_ENVIRONMENTS,
   createEmptyGroup,
@@ -14,32 +21,6 @@ import {
 } from '../deployments/terminalGroupsStorage'
 import { useTerminal } from '../terminal/TerminalContext'
 import { ConfirmDangerModal } from './ConfirmDangerModal'
-type DeployLogEntry = {
-  id: string
-  at: number
-  message: string
-  /** Terminal tab id when the action created a session you can focus. */
-  tabId?: string
-}
-
-function newLogId() {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `l-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function slotRunnable(s: TerminalGroupSlot) {
-  return Boolean(s.label.trim() && s.cwd.trim() && s.command.trim())
-}
-
-function buildCommand(slot: TerminalGroupSlot) {
-  const cmd = slot.command.trim() || 'pnpm dev'
-  const port = slot.portNote?.trim()
-  if (port && /^[0-9]+$/.test(port) && !/\bPORT=/.test(cmd) && !/--port\b/.test(cmd)) {
-    return `PORT=${port} ${cmd}`
-  }
-  return cmd
-}
 
 const SLOT_DRAG_MIME = 'application/x-dev-manager-slot-index'
 
@@ -69,6 +50,12 @@ function openSiteInNewTab(raw: string) {
   if (href) window.open(href, '_blank', 'noopener,noreferrer')
 }
 
+function folderLabelFromPath(p: string): string {
+  const t = p.trim().replace(/[/\\]+$/, '')
+  const parts = t.split(/[/\\]/).filter(Boolean)
+  return parts[parts.length - 1] || 'Project'
+}
+
 function envPillClass(env: ProjectEnvironment): string {
   switch (env) {
     case 'production':
@@ -84,14 +71,14 @@ function envPillClass(env: ProjectEnvironment): string {
 
 export function DeploymentsPanel() {
   const {
-    open,
     showTerminal,
     focusTerminalTab,
     addTerminalTab,
     removeTerminalTab,
+    runInTerminal,
     tabs,
-    tabExitEvent,
-    clearTabExitEvent,
+    deploymentSlotTabMap,
+    linkDeploymentSlotToTab,
   } = useTerminal()
 
   const [groups, setGroups] = useState<TerminalGroup[]>(() => loadTerminalGroups())
@@ -102,50 +89,13 @@ export function DeploymentsPanel() {
     return initial[0]?.id ?? null
   })
 
-  /** project slot id → terminal tab id (may include closed tabs until pruned by exit handler) */
-  const [projectTabMap, setProjectTabMap] = useState<Record<string, string>>({})
-
   const runningMap = useMemo(() => {
     const out: Record<string, string> = {}
-    for (const [pid, tid] of Object.entries(projectTabMap)) {
+    for (const [pid, tid] of Object.entries(deploymentSlotTabMap)) {
       if (tabs.some((t) => t.id === tid)) out[pid] = tid
     }
     return out
-  }, [projectTabMap, tabs])
-
-  const tabIdsKey = useMemo(
-    () =>
-      [...tabs]
-        .map((t) => t.id)
-        .sort()
-        .join('\0'),
-    [tabs],
-  )
-
-  /** Drop stale slot→tab links when tabs are removed (e.g. closed) without a WS exit event. */
-  useEffect(() => {
-    const idSet = new Set(tabIdsKey ? tabIdsKey.split('\0') : [])
-    setProjectTabMap((m) => {
-      let changed = false
-      const next = { ...m }
-      for (const k of Object.keys(next)) {
-        if (!idSet.has(next[k])) {
-          delete next[k]
-          changed = true
-        }
-      }
-      return changed ? next : m
-    })
-  }, [tabIdsKey])
-
-  const [deployView, setDeployView] = useState<'projects' | 'activity'>('projects')
-  const [deployLog, setDeployLog] = useState<DeployLogEntry[]>([])
-
-  const pushDeployLog = useCallback((message: string, tabId?: string) => {
-    setDeployLog((prev) =>
-      [{ id: newLogId(), at: Date.now(), message, tabId }, ...prev].slice(0, 150),
-    )
-  }, [])
+  }, [deploymentSlotTabMap, tabs])
 
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [editSlotId, setEditSlotId] = useState<string | null>(null)
@@ -158,6 +108,25 @@ export function DeploymentsPanel() {
   const [formEnv, setFormEnv] = useState<ProjectEnvironment>('development')
   const [formPort, setFormPort] = useState('')
   const [formSiteUrl, setFormSiteUrl] = useState('')
+
+  type PkgScriptsEntry =
+    | { state: 'loading' }
+    | { state: 'none' }
+    | {
+        state: 'ok'
+        runner: string
+        scriptNames: string[]
+        runnerSource: string
+        runnerSourceDetail?: string
+      }
+    | { state: 'err'; message: string }
+
+  const [pkgScriptsByCwd, setPkgScriptsByCwd] = useState<Record<string, PkgScriptsEntry>>({})
+  const pkgScriptsByCwdRef = useRef(pkgScriptsByCwd)
+  pkgScriptsByCwdRef.current = pkgScriptsByCwd
+  /** Bumped on effect cleanup so aborted fetches never skip a retry or clobber a newer request. */
+  const pkgFetchGenRef = useRef<Record<string, number>>({})
+  const [scriptSelectBust, setScriptSelectBust] = useState<Record<string, number>>({})
 
   const [dragSlotIndex, setDragSlotIndex] = useState<number | null>(null)
 
@@ -192,58 +161,111 @@ export function DeploymentsPanel() {
     [groups, effectiveGroupId],
   )
 
+  const slotsCwdFingerprint = useMemo(() => {
+    if (!activeGroup) return ''
+    return [...new Set(activeGroup.slots.map((s) => s.cwd.trim()).filter(Boolean))].sort().join('\0')
+  }, [activeGroup])
+
+  useEffect(() => {
+    if (!slotsCwdFingerprint) return
+    /** Stable list from fingerprint — do not depend on `activeGroup` reference (it changes every groups update and was aborting every in-flight fetch). */
+    const cwds = slotsCwdFingerprint.split('\0').filter(Boolean)
+    const inflight: { cwd: string; ac: AbortController; tid: number }[] = []
+
+    for (const cwd of cwds) {
+      const ex = pkgScriptsByCwdRef.current[cwd]
+      if (ex?.state === 'ok' || ex?.state === 'none' || ex?.state === 'err') continue
+
+      const prevGen = pkgFetchGenRef.current[cwd] ?? 0
+      const myGen = prevGen + 1
+      pkgFetchGenRef.current[cwd] = myGen
+
+      const ac = new AbortController()
+      const tid = window.setTimeout(() => ac.abort(), 20_000)
+      inflight.push({ cwd, ac, tid })
+
+      setPkgScriptsByCwd((p) => (p[cwd]?.state === 'loading' ? p : { ...p, [cwd]: { state: 'loading' } }))
+
+      void (async () => {
+        const stale = () => pkgFetchGenRef.current[cwd] !== myGen
+        try {
+          const res = await fetch('/api/deployments/package-json', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cwd }),
+            signal: ac.signal,
+          })
+          if (stale()) return
+          const data = (await res.json()) as {
+            ok?: boolean
+            error?: string
+            hasPackageJson?: boolean
+            scripts?: Record<string, string>
+            runner?: string
+            runnerSource?: string
+            runnerSourceDetail?: string
+          }
+          if (ac.signal.aborted || stale()) return
+          if (!data.ok) {
+            if (stale()) return
+            setPkgScriptsByCwd((p) => ({
+              ...p,
+              [cwd]: { state: 'err', message: data.error || 'Could not read package.json' },
+            }))
+            return
+          }
+          if (!data.hasPackageJson) {
+            if (stale()) return
+            setPkgScriptsByCwd((p) => ({ ...p, [cwd]: { state: 'none' } }))
+            return
+          }
+          const names = Object.keys(data.scripts ?? {}).sort()
+          if (stale()) return
+          setPkgScriptsByCwd((p) => ({
+            ...p,
+            [cwd]: {
+              state: 'ok',
+              runner: data.runner || 'npm',
+              scriptNames: names,
+              runnerSource: data.runnerSource || 'npm_default',
+              ...(typeof data.runnerSourceDetail === 'string' && data.runnerSourceDetail.trim()
+                ? { runnerSourceDetail: data.runnerSourceDetail.trim() }
+                : {}),
+            },
+          }))
+        } catch {
+          if (stale()) return
+          if (ac.signal.aborted) {
+            setPkgScriptsByCwd((p) => ({
+              ...p,
+              [cwd]: { state: 'err', message: 'Timed out reading package.json' },
+            }))
+            return
+          }
+          if (stale()) return
+          setPkgScriptsByCwd((p) => ({
+            ...p,
+            [cwd]: { state: 'err', message: 'Request failed' },
+          }))
+        } finally {
+          window.clearTimeout(tid)
+        }
+      })()
+    }
+
+    return () => {
+      for (const { cwd, ac, tid } of inflight) {
+        window.clearTimeout(tid)
+        ac.abort()
+        pkgFetchGenRef.current[cwd] = (pkgFetchGenRef.current[cwd] ?? 0) + 1
+      }
+    }
+  }, [slotsCwdFingerprint])
+
   const pendingProfileDelete = useMemo(
     () => (deleteProfileId ? groups.find((g) => g.id === deleteProfileId) : undefined),
     [deleteProfileId, groups],
   )
-
-  const totalProjects = useMemo(() => groups.reduce((n, g) => n + g.slots.length, 0), [groups])
-  const runningCount = useMemo(() => Object.keys(runningMap).length, [runningMap])
-
-  const stats = useMemo(() => {
-    const here = activeGroup?.slots.length ?? 0
-    return [
-      {
-        label: 'Terminal groups',
-        value: String(groups.length),
-        change: `${totalProjects} projects`,
-        trend: 'up' as const,
-      },
-      {
-        label: 'This profile',
-        value: activeGroup?.name ?? '—',
-        change: `${here} project${here === 1 ? '' : 's'}`,
-        trend: 'up' as const,
-      },
-      {
-        label: 'Running now',
-        value: String(runningCount),
-        change: runningCount ? 'active' : 'idle',
-        trend: runningCount ? ('up' as const) : ('down' as const),
-      },
-      {
-        label: 'Integrated shell',
-        value: open ? 'Open' : 'Hidden',
-        change: open ? 'Live' : 'Tap header',
-        trend: 'up' as const,
-      },
-    ]
-  }, [groups.length, totalProjects, activeGroup, runningCount, open])
-
-  useEffect(() => {
-    if (!tabExitEvent) return
-    const { tabId } = tabExitEvent
-    startTransition(() => {
-      setProjectTabMap((m) => {
-        const next = { ...m }
-        for (const k of Object.keys(next)) {
-          if (next[k] === tabId) delete next[k]
-        }
-        return next
-      })
-      clearTabExitEvent()
-    })
-  }, [tabExitEvent, clearTabExitEvent])
 
   const patchGroup = useCallback((groupId: string, fn: (g: TerminalGroup) => TerminalGroup) => {
     setGroups((gs) => gs.map((g) => (g.id === groupId ? fn(g) : g)))
@@ -339,11 +361,6 @@ export function DeploymentsPanel() {
 
     if (wasRunning && oldTabId) {
       removeTerminalTab(oldTabId)
-      setProjectTabMap((m) => {
-        const x = { ...m }
-        delete x[editSlotId]
-        return x
-      })
       window.setTimeout(() => {
         const cmd = buildCommand(next)
         const tabId = addTerminalTab({
@@ -351,9 +368,10 @@ export function DeploymentsPanel() {
           cwd: next.cwd,
           command: cmd,
           projectSlotId: next.id,
+          jobCategory: 'run',
+          jobDetail: cmd,
         })
-        setProjectTabMap((m) => ({ ...m, [next.id]: tabId }))
-        pushDeployLog(`Saved & restarted “${next.label.trim() || 'project'}”`, tabId)
+        linkDeploymentSlotToTab(next.id, tabId)
         showTerminal()
       }, 200)
     }
@@ -370,63 +388,56 @@ export function DeploymentsPanel() {
     addTerminalTab,
     showTerminal,
     slotFromForm,
-    pushDeployLog,
+    linkDeploymentSlotToTab,
   ])
 
   const startProject = useCallback(
     (slot: TerminalGroupSlot) => {
       if (!slotRunnable(slot) || runningMap[slot.id]) return
+      const cmd = buildCommand(slot)
       const tabId = addTerminalTab({
         label: slot.label.trim() || 'Project',
         cwd: slot.cwd.trim(),
-        command: buildCommand(slot),
+        command: cmd,
         projectSlotId: slot.id,
+        jobCategory: 'run',
+        jobDetail: cmd,
       })
-      setProjectTabMap((m) => ({ ...m, [slot.id]: tabId }))
-      pushDeployLog(`Started “${slot.label.trim() || 'project'}”`, tabId)
+      linkDeploymentSlotToTab(slot.id, tabId)
       showTerminal()
     },
-    [runningMap, addTerminalTab, showTerminal, pushDeployLog],
+    [runningMap, addTerminalTab, showTerminal, linkDeploymentSlotToTab],
   )
 
   const stopProject = useCallback(
     (slot: TerminalGroupSlot) => {
       const tid = runningMap[slot.id]
       if (!tid) return
-      pushDeployLog(`Stopped “${slot.label.trim() || 'project'}” (terminal tab closed)`)
       removeTerminalTab(tid)
-      setProjectTabMap((m) => {
-        const x = { ...m }
-        delete x[slot.id]
-        return x
-      })
     },
-    [runningMap, removeTerminalTab, pushDeployLog],
+    [runningMap, removeTerminalTab],
   )
 
   const restartProject = useCallback(
     (slot: TerminalGroupSlot) => {
       const tid = runningMap[slot.id]
       if (tid) removeTerminalTab(tid)
-      setProjectTabMap((m) => {
-        const x = { ...m }
-        delete x[slot.id]
-        return x
-      })
       window.setTimeout(() => {
         if (!slotRunnable(slot)) return
+        const cmd = buildCommand(slot)
         const tabId = addTerminalTab({
           label: slot.label.trim() || 'Project',
           cwd: slot.cwd.trim(),
-          command: buildCommand(slot),
+          command: cmd,
           projectSlotId: slot.id,
+          jobCategory: 'run',
+          jobDetail: cmd,
         })
-        setProjectTabMap((m) => ({ ...m, [slot.id]: tabId }))
-        pushDeployLog(`Restarted “${slot.label.trim() || 'project'}”`, tabId)
+        linkDeploymentSlotToTab(slot.id, tabId)
         showTerminal()
       }, 200)
     },
-    [runningMap, removeTerminalTab, addTerminalTab, showTerminal, pushDeployLog],
+    [runningMap, removeTerminalTab, addTerminalTab, showTerminal, linkDeploymentSlotToTab],
   )
 
   const confirmRemoveProfile = useCallback(() => {
@@ -436,25 +447,21 @@ export function DeploymentsPanel() {
       for (const slot of g.slots) {
         if (runningMap[slot.id]) stopProject(slot)
       }
-      pushDeployLog(`Removed profile “${g.name.trim() || 'profile'}”`)
     }
     removeGroup(deleteProfileId)
     setDeleteProfileId(null)
-  }, [deleteProfileId, groups, runningMap, removeGroup, stopProject, pushDeployLog])
+  }, [deleteProfileId, groups, runningMap, removeGroup, stopProject])
 
   const confirmDelete = useCallback(() => {
     if (!activeGroup || !deleteSlotId) return
     const slot = activeGroup.slots.find((s) => s.id === deleteSlotId)
     if (slot && runningMap[slot.id]) stopProject(slot)
-    if (slot) {
-      pushDeployLog(`Removed “${slot.label.trim() || 'project'}” from this profile`)
-    }
     patchGroup(activeGroup.id, (g) => ({
       ...g,
       slots: g.slots.filter((s) => s.id !== deleteSlotId),
     }))
     setDeleteSlotId(null)
-  }, [activeGroup, deleteSlotId, runningMap, patchGroup, stopProject, pushDeployLog])
+  }, [activeGroup, deleteSlotId, runningMap, patchGroup, stopProject])
 
   const projectFormFields = (
     <>
@@ -540,31 +547,9 @@ export function DeploymentsPanel() {
 
   return (
     <>
-      <section className="admin__stats" aria-label="Deployments metrics">
-        {stats.map((s) => (
-          <article key={s.label} className="stat-card">
-            <div className="stat-card__label">{s.label}</div>
-            <div className="stat-card__row">
-              <span className="stat-card__value deployments-panel__stat-value">{s.value}</span>
-              <span className={`stat-card__change stat-card__change--${s.trend}`}>{s.change}</span>
-            </div>
-          </article>
-        ))}
-      </section>
-
       <section className="panel deployments-panel">
-        <div className="panel__head">
-          <div>
-            <h2>Projects</h2>
-            <p className="deployments-panel__lede">
-              Add projects to this profile, then start or stop them in the integrated terminal. Create does not run the
-              command until you choose Start.
-            </p>
-          </div>
+        <div className="panel__head deployments-panel__head--toolbar">
           <div className="deployments-panel__head-actions">
-            <button type="button" className="btn btn--ghost" onClick={showTerminal}>
-              Show terminal
-            </button>
             <button type="button" className="btn btn--primary" onClick={openAddModal}>
               Add project
             </button>
@@ -574,68 +559,9 @@ export function DeploymentsPanel() {
           </div>
         </div>
 
-        <div className="deployments-panel__view-tabs" role="tablist" aria-label="Deployments views">
-          <button
-            type="button"
-            role="tab"
-            className="deployments-panel__view-tab"
-            aria-selected={deployView === 'projects'}
-            onClick={() => setDeployView('projects')}
-          >
-            Projects
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="deployments-panel__view-tab"
-            aria-selected={deployView === 'activity'}
-            onClick={() => setDeployView('activity')}
-          >
-            Activity log
-          </button>
-        </div>
-
-        {deployView === 'activity' ? (
-          <div className="deployments-panel__activity">
-            {deployLog.length === 0 ? (
-              <p className="deployments-panel__activity-empty">
-                Start, stop, or restart a project to see entries here. Use <strong>Open terminal</strong> to jump to a
-                tab that is still running.
-              </p>
-            ) : (
-              deployLog.map((entry) => {
-                const tabAlive = entry.tabId && tabs.some((t) => t.id === entry.tabId)
-                return (
-                  <div key={entry.id} className="deployments-panel__activity-row">
-                    <span className="deployments-panel__activity-time">
-                      {new Date(entry.at).toLocaleTimeString(undefined, {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
-                    </span>
-                    <span className="deployments-panel__activity-msg">{entry.message}</span>
-                    {tabAlive ? (
-                      <button
-                        type="button"
-                        className="btn btn--secondary btn--xs"
-                        onClick={() => focusTerminalTab(entry.tabId!)}
-                      >
-                        Open terminal
-                      </button>
-                    ) : null}
-                  </div>
-                )
-              })
-            )}
-          </div>
-        ) : null}
-
-        {deployView === 'projects' ? (
-          <>
         <div className="deployments-panel__filters">
           <label className="deployments-panel__field">
-            <span>Active profile</span>
+            <span>Profile</span>
             <select
               className="deployments-panel__select"
               value={effectiveGroupId ?? activeGroup.id}
@@ -649,7 +575,7 @@ export function DeploymentsPanel() {
             </select>
           </label>
           <label className="deployments-panel__field deployments-panel__field--grow">
-            <span>Profile name</span>
+            <span>Name</span>
             <input
               type="text"
               className="deployments-panel__text-input"
@@ -676,14 +602,16 @@ export function DeploymentsPanel() {
                 <th scope="col">Name</th>
                 <th scope="col">Environment</th>
                 <th scope="col">Status</th>
-                <th scope="col">Actions</th>
+                <th scope="col" className="deployments-panel__th-actions">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {activeGroup.slots.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="data-table__muted">
-                    No projects yet. Use <strong>Add project</strong> to save one in this profile.
+                    No projects in this profile.
                   </td>
                 </tr>
               ) : (
@@ -745,7 +673,103 @@ export function DeploymentsPanel() {
                           <span className="status status--failed">Incomplete</span>
                         )}
                       </td>
-                      <td>
+                      <td className="deployments-panel__actions-cell">
+                        <div className="deployments-panel__actions-row">
+                        {(() => {
+                          const cwd = slot.cwd.trim()
+                          if (!cwd) return null
+                          const pkg = pkgScriptsByCwd[cwd]
+                          return (
+                            <>
+                              {pkg?.state === 'loading' || pkg === undefined ? (
+                                <div
+                                  className="deployments-panel__script-strip deployments-panel__script-strip--loading deployments-panel__script-strip--inline"
+                                  role="status"
+                                  aria-live="polite"
+                                  aria-label="Loading package.json"
+                                >
+                                  <span className="deployments-panel__script-spinner" aria-hidden />
+                                  <span className="deployments-panel__script-strip-text">Loading…</span>
+                                </div>
+                              ) : null}
+                              {pkg?.state === 'ok' ? (
+                                (() => {
+                                  const installCmd = formatPackageInstallCommand(pkg.runner)
+                                  const detectDesc = packageManagerDetectionDescription(
+                                    pkg.runnerSource,
+                                    pkg.runnerSourceDetail,
+                                  )
+                                  const badgeTitle = `${pkg.runner} — ${detectDesc}`
+                                  const selectTitle = `Choose a package.json script or ${installCmd}. ${detectDesc}`
+                                  return (
+                                    <div className="deployments-panel__script-strip deployments-panel__script-strip--ready deployments-panel__script-strip--inline">
+                                      <span
+                                        className="deployments-panel__runner-badge"
+                                        title={badgeTitle}
+                                      >
+                                        {pkg.runner}
+                                      </span>
+                                      <select
+                                        key={`${slot.id}-${scriptSelectBust[slot.id] ?? 0}`}
+                                        className="deployments-panel__script-select"
+                                        defaultValue=""
+                                        title={selectTitle}
+                                        aria-label={`Run script or install for ${slot.label.trim() || cwd}`}
+                                        onChange={(e) => {
+                                          const name = e.target.value
+                                          if (!name) return
+                                          const cmd =
+                                            name === PACKAGE_JSON_SELECT_INSTALL_VALUE
+                                              ? installCmd
+                                              : formatPackageScriptCommand(pkg.runner, name)
+                                          runInTerminal(cmd, {
+                                            cwd,
+                                            label: slot.label.trim() || folderLabelFromPath(cwd),
+                                            projectSlotId: slot.id,
+                                            jobCategory: 'task',
+                                            jobDetail: cmd,
+                                          })
+                                          showTerminal()
+                                          setScriptSelectBust((b) => ({
+                                            ...b,
+                                            [slot.id]: (b[slot.id] ?? 0) + 1,
+                                          }))
+                                        }}
+                                      >
+                                        <option value="">Run…</option>
+                                        <optgroup label="Install">
+                                          <option value={PACKAGE_JSON_SELECT_INSTALL_VALUE}>
+                                            {installCmd}
+                                          </option>
+                                        </optgroup>
+                                        {pkg.scriptNames.length > 0 ? (
+                                          <optgroup label="Scripts">
+                                            {pkg.scriptNames.map((s) => (
+                                              <option key={s} value={s}>
+                                                {s}
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        ) : null}
+                                      </select>
+                                    </div>
+                                  )
+                                })()
+                              ) : null}
+                              {pkg?.state === 'err' ? (
+                                <div
+                                  className="deployments-panel__script-strip deployments-panel__script-strip--err deployments-panel__script-strip--inline"
+                                  role="alert"
+                                  title={pkg.message}
+                                >
+                                  <span className="deployments-panel__script-strip-err-msg">
+                                    {pkg.message}
+                                  </span>
+                                </div>
+                              ) : null}
+                            </>
+                          )
+                        })()}
                         <div className="deployments-panel__row-actions">
                           {siteHref && running ? (
                             <button
@@ -816,6 +840,7 @@ export function DeploymentsPanel() {
                             </>
                           ) : null}
                         </div>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -825,20 +850,6 @@ export function DeploymentsPanel() {
           </table>
         </div>
 
-        <div className="deployments-panel__foot">
-          <p className="deployments-panel__hint">
-            <strong>Stop</strong> closes the terminal tab for that project (ends the dev process); stop first to{' '}
-            <strong>Edit</strong> or <strong>Delete</strong>. <strong>Hide</strong> on the terminal panel only tucks it
-            away — the shell keeps running until you close the tab or stop the project. Refreshing the page disconnects
-            the shell (browser limitation). Optional port: digits only →{' '}
-            <code className="host-editor__inline-code">PORT=&lt;n&gt;</code> prefix on Unix. With a site URL set,{' '}
-            <strong>Open site</strong> appears while the project is running;
-            drag <strong>⋮⋮</strong> to reorder projects (saved with this profile). Start runs{' '}
-            <code className="host-editor__inline-code">cd</code> into the project path first, then your command.
-          </p>
-        </div>
-          </>
-        ) : null}
       </section>
 
       {addModalOpen ? (

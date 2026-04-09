@@ -9,6 +9,8 @@ import { dbTestApiPlugin } from './vite-plugin-db-test-api'
 import { redisBrowserApiPlugin } from './vite-plugin-redis-browser-api'
 import { postgresBrowserApiPlugin } from './vite-plugin-postgres-browser-api'
 import { postgresAdminApiPlugin } from './vite-plugin-postgres-admin-api'
+import { linuxAutostartApiPlugin } from './vite-plugin-linux-autostart-api'
+import { deploymentsPackageApiPlugin } from './vite-plugin-deployments-package-api'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -23,6 +25,8 @@ export default defineConfig({
     redisBrowserApiPlugin(),
     postgresBrowserApiPlugin(),
     postgresAdminApiPlugin(),
+    linuxAutostartApiPlugin(),
+    deploymentsPackageApiPlugin(),
   ],
   server: {
     port: 9999,

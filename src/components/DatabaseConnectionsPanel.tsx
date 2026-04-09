@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
+import { notifyAppStorageChanged, STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
 import {
   type ConnectionKind,
   type DbConnection,
   defaultPort,
   kindLabel,
   loadConnections,
-  mysqlCliCommand,
   newConnectionId,
-  psqlCommand,
-  redisCliCommand,
   saveConnections,
 } from '../database/connectionsStorage'
 import { ConfirmDangerModal } from './ConfirmDangerModal'
@@ -30,6 +27,10 @@ export function DatabaseConnectionsPanel() {
   const [connections, setConnections] = useState<DbConnection[]>(loadConnections)
   const [banner, setBanner] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  /** When set, modal saves over this connection id instead of appending. */
+  const [editingId, setEditingId] = useState<string | null>(null)
+  /** Edit mode: empty password + untouched = keep stored password; touched empty = clear. */
+  const [passwordTouched, setPasswordTouched] = useState(false)
   const [form, setForm] = useState(() => emptyForm('redis'))
   const [testBusy, setTestBusy] = useState(false)
   const [testHint, setTestHint] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -47,7 +48,26 @@ export function DatabaseConnectionsPanel() {
   }, [])
 
   const openModal = useCallback(() => {
+    setEditingId(null)
+    setPasswordTouched(false)
     setForm(emptyForm('redis'))
+    setBanner(null)
+    setTestHint(null)
+    setModalOpen(true)
+  }, [])
+
+  const openEditModal = useCallback((c: DbConnection) => {
+    setEditingId(c.id)
+    setPasswordTouched(false)
+    setForm({
+      name: c.name,
+      kind: c.kind,
+      host: c.host,
+      port: c.port,
+      username: c.username ?? '',
+      database: c.database ?? '',
+      password: '',
+    })
     setBanner(null)
     setTestHint(null)
     setModalOpen(true)
@@ -55,6 +75,8 @@ export function DatabaseConnectionsPanel() {
 
   const closeModal = useCallback(() => {
     setModalOpen(false)
+    setEditingId(null)
+    setPasswordTouched(false)
     setTestHint(null)
   }, [])
 
@@ -100,7 +122,7 @@ export function DatabaseConnectionsPanel() {
     }
   }, [form])
 
-  const addConnection = useCallback(
+  const saveConnection = useCallback(
     (e: FormEvent) => {
       e.preventDefault()
       const name = form.name.trim()
@@ -110,26 +132,64 @@ export function DatabaseConnectionsPanel() {
       }
       const host = form.host.trim() || '127.0.0.1'
       const kind = form.kind
+      const username = kind === 'redis' ? undefined : form.username?.trim() || undefined
+      const database = kind === 'redis' ? undefined : form.database?.trim() || undefined
+      const trimmedPw = form.password?.trim() ?? ''
+
+      if (editingId) {
+        setConnections((prev) => {
+          const idx = prev.findIndex((c) => c.id === editingId)
+          if (idx < 0) return prev
+          const prevRow = prev[idx]!
+          let password = prevRow.password
+          if (passwordTouched) {
+            password = trimmedPw || undefined
+          }
+          const next = [...prev]
+          next[idx] = {
+            ...prevRow,
+            name,
+            kind,
+            host,
+            port: Number(form.port) || defaultPort(kind),
+            username,
+            database,
+            password,
+          }
+          return next
+        })
+        notifyAppStorageChanged()
+        closeModal()
+        setBanner({ type: 'ok', text: 'Updated.' })
+        return
+      }
+
       const row: DbConnection = {
         id: newConnectionId(),
         name,
         kind,
         host,
         port: Number(form.port) || defaultPort(kind),
-        username: kind === 'redis' ? undefined : form.username?.trim() || undefined,
-        database: kind === 'redis' ? undefined : form.database?.trim() || undefined,
-        password: form.password?.trim() || undefined,
+        username,
+        database,
+        password: trimmedPw || undefined,
       }
       setConnections((prev) => [...prev, row])
-      setModalOpen(false)
-      setBanner({ type: 'ok', text: 'Connection saved in this browser.' })
+      closeModal()
+      setBanner({ type: 'ok', text: 'Saved.' })
     },
-    [form],
+    [form, editingId, passwordTouched, closeModal],
   )
 
   const confirmRemoveConnection = useCallback(() => {
     if (!removeConfirmId) return
-    setConnections((prev) => prev.filter((c) => c.id !== removeConfirmId))
+    const id = removeConfirmId
+    setConnections((prev) => {
+      const next = prev.filter((c) => c.id !== id)
+      saveConnections(next)
+      notifyAppStorageChanged()
+      return next
+    })
     setRemoveConfirmId(null)
     setBanner(null)
   }, [removeConfirmId])
@@ -138,12 +198,12 @@ export function DatabaseConnectionsPanel() {
 
   const openBrowse = useCallback(
     (c: DbConnection) => {
-      if (c.kind === 'redis') {
-        navigate(`/database/redis/${encodeURIComponent(c.id)}`)
-        return
-      }
-      if (c.kind === 'postgresql') {
-        navigate(`/database/postgresql/${encodeURIComponent(c.id)}`)
+      if (c.kind === 'redis' || c.kind === 'postgresql') {
+        const inst = crypto.randomUUID()
+        const q = new URLSearchParams()
+        q.set('tab', c.id)
+        q.set('inst', inst)
+        navigate(`/database?${q.toString()}`)
         return
       }
       if (c.kind === 'mysql') {
@@ -153,43 +213,18 @@ export function DatabaseConnectionsPanel() {
     [navigate],
   )
 
-  const copyCmd = useCallback((c: DbConnection) => {
-    const cmd =
-      c.kind === 'redis'
-        ? redisCliCommand(c)
-        : c.kind === 'mysql'
-          ? mysqlCliCommand(c)
-          : psqlCommand(c)
-    void navigator.clipboard.writeText(cmd).then(
-      () => setBanner({ type: 'ok', text: 'CLI command copied.' }),
-      () => setBanner({ type: 'err', text: 'Could not copy to clipboard.' }),
-    )
-  }, [])
-
   return (
     <section className="panel database-connections-panel">
       <div className="panel__head">
-        <div>
-          <h2>Connections</h2>
-          <p className="database-connections-panel__sub">
-            Redis, MySQL, and PostgreSQL — stored in this browser’s localStorage only.
-          </p>
-        </div>
+        <h2>Connections</h2>
         <button type="button" className="btn btn--primary" onClick={openModal}>
           Add connection
         </button>
       </div>
 
-      <p className="database-connections-panel__warn">
-        Passwords are stored in <strong>localStorage</strong> for convenience on your machine — not
-        for production secrets.
+      <p className="database-connections-panel__sub database-connections-panel__sub--inline">
+        <NavLink to="/database/postgresql-admin">PostgreSQL server admin</NavLink>
       </p>
-
-      <div className="pg-admin-panel__cta">
-        For local PostgreSQL:{' '}
-        <NavLink to="/database/postgresql-admin">PostgreSQL server admin</NavLink> — databases, roles,
-        CONNECT grants, passwords.
-      </div>
 
       {banner ? (
         <div className={`host-editor__banner host-editor__banner--${banner.type}`}>{banner.text}</div>
@@ -197,9 +232,7 @@ export function DatabaseConnectionsPanel() {
 
       <div className="database-connections-panel__body">
         {connections.length === 0 ? (
-          <p className="database-connections-panel__empty">
-            No connections yet. Click <strong>Add connection</strong> to create one.
-          </p>
+          <p className="database-connections-panel__empty">No connections yet.</p>
         ) : (
           <div className="table-wrap">
             <table className="data-table">
@@ -258,9 +291,9 @@ export function DatabaseConnectionsPanel() {
                         <button
                           type="button"
                           className="btn btn--ghost btn--xs"
-                          onClick={() => copyCmd(c)}
+                          onClick={() => openEditModal(c)}
                         >
-                          Copy CLI
+                          Edit
                         </button>
                         <button
                           type="button"
@@ -289,9 +322,9 @@ export function DatabaseConnectionsPanel() {
             if (e.target === e.currentTarget) closeModal()
           }}
         >
-          <form className="modal database-connections-modal" onSubmit={addConnection}>
+          <form className="modal database-connections-modal" onSubmit={saveConnection}>
             <div className="modal__head">
-              <h2 id="db-conn-modal-title">New connection</h2>
+              <h2 id="db-conn-modal-title">{editingId ? 'Edit connection' : 'New connection'}</h2>
               <button
                 type="button"
                 className="modal__close"
@@ -308,6 +341,9 @@ export function DatabaseConnectionsPanel() {
                   <select
                     className="database-connections-panel__input"
                     value={form.kind}
+                    disabled={editingId !== null}
+                    title={editingId ? 'Type cannot be changed when editing' : undefined}
+                    aria-disabled={editingId !== null}
                     onChange={(e) => {
                       const k = e.target.value as ConnectionKind
                       setForm((f) => ({
@@ -328,9 +364,9 @@ export function DatabaseConnectionsPanel() {
                     className="database-connections-panel__input"
                     value={form.name}
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="e.g. Local Redis"
+                    placeholder="Display name"
                     autoComplete="off"
-                    autoFocus
+                    autoFocus={!editingId}
                   />
                 </label>
                 <label className="database-connections-panel__field">
@@ -384,7 +420,11 @@ export function DatabaseConnectionsPanel() {
                         className="database-connections-panel__input"
                         type="password"
                         value={form.password}
-                        onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                        placeholder={editingId ? 'Unchanged if empty' : undefined}
+                        onChange={(e) => {
+                          setPasswordTouched(true)
+                          setForm((f) => ({ ...f, password: e.target.value }))
+                        }}
                         autoComplete="new-password"
                       />
                     </label>
@@ -396,8 +436,11 @@ export function DatabaseConnectionsPanel() {
                       className="database-connections-panel__input"
                       type="password"
                       value={form.password}
-                      onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                      placeholder="Redis AUTH / ACL"
+                      placeholder={editingId ? 'Unchanged if empty' : undefined}
+                      onChange={(e) => {
+                        setPasswordTouched(true)
+                        setForm((f) => ({ ...f, password: e.target.value }))
+                      }}
                       autoComplete="new-password"
                     />
                   </label>
@@ -426,7 +469,7 @@ export function DatabaseConnectionsPanel() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn--primary">
-                  Save connection
+                  {editingId ? 'Save changes' : 'Save connection'}
                 </button>
               </div>
             </div>
@@ -446,7 +489,7 @@ export function DatabaseConnectionsPanel() {
         >
           <div className="modal database-connections-modal db-browse-planned-modal">
             <div className="modal__head">
-              <h2 id="db-browse-planned-title">MySQL browser coming soon</h2>
+              <h2 id="db-browse-planned-title">MySQL</h2>
               <button
                 type="button"
                 className="modal__close"
@@ -457,17 +500,7 @@ export function DatabaseConnectionsPanel() {
               </button>
             </div>
             <div className="modal__body database-connections-modal__body db-browse-planned-modal__body">
-              <p>
-                In-app browsing for <strong>{kindLabel(browseSqlPlanned)}</strong> will work like a small{' '}
-                <strong>Prisma Studio</strong>–style explorer: pick a database, open tables, and inspect rows.
-              </p>
-              <p className="db-browse-planned-modal__note">
-                Document databases (for example MongoDB) are planned as a separate, document-oriented browser when we
-                add those connection types.
-              </p>
-              <p className="database-connections-panel__muted">
-                For now, use <strong>Copy CLI</strong> or your usual GUI client.
-              </p>
+              <p>In-app browsing is not available for {kindLabel(browseSqlPlanned)} yet.</p>
             </div>
             <div className="modal__foot">
               <button type="button" className="btn btn--primary" onClick={() => setBrowseSqlPlanned(null)}>
@@ -484,8 +517,7 @@ export function DatabaseConnectionsPanel() {
         titleId="db-conn-remove-title"
         message={
           <>
-            Remove <strong>{removeTarget?.name ?? 'this connection'}</strong> from this browser only? Saved passwords
-            for it will be deleted.
+            Remove <strong>{removeTarget?.name ?? 'this connection'}</strong>? This only affects this browser.
           </>
         }
         confirmLabel="Remove"

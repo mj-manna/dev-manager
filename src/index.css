@@ -8,6 +8,7 @@
 
   --accent: #0ea5e9;
   --accent-hover: #0284c7;
+  --accent-muted: #7dd3fc;
   --success: #10b981;
   --success-bg: rgba(16, 185, 129, 0.1);
   --warning: #f59e0b;
@@ -17,6 +18,7 @@
 
   --header-height: 64px;
   --sidebar-width: 260px;
+  --sidebar-width-collapsed: 68px;
   --sidebar-bg: #f1f5f9;
   --sidebar-border: #e2e8f0;
   --sidebar-text: #64748b;
@@ -26,9 +28,38 @@
   --sidebar-accent-soft: rgba(14, 165, 233, 0.12);
   --radius: 12px;
   --radius-sm: 8px;
+  --radius-xs: 5px;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow: 0 4px 24px rgba(15, 23, 42, 0.08);
 
+  /* Controls & motion */
+  --control-bg: var(--surface);
+  --control-border: #cbd5e1;
+  --control-border-hover: #94a3b8;
+  --checkbox-size: 1.125rem;
+  --checkbox-size-dense: 1rem;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 0.15s;
+  --duration-normal: 0.2s;
+  --focus-ring-color: var(--accent);
+  --focus-ring-offset: 2px;
+  --focus-ring-width: 2px;
+  --focus-glow-input: 0 0 0 3px rgba(14, 165, 233, 0.16);
+  --state-hover-accent: rgba(14, 165, 233, 0.06);
+  --state-selected-mix: rgba(14, 165, 233, 0.1);
+  --state-selected-mix-alt: rgba(14, 165, 233, 0.14);
+
+  /* Scrollbars */
+  --scrollbar-size: 10px;
+  --scrollbar-thumb: rgba(100, 116, 139, 0.42);
+  --scrollbar-thumb-hover: rgba(100, 116, 139, 0.68);
+  --scrollbar-track: transparent;
+
+  /* Database browser (PG / Redis) left pane — narrow column */
+  --db-browser-sidebar-min: 7.5rem;
+  --db-browser-sidebar-max: 22%;
+
+  color-scheme: light;
   font-family: 'DM Sans', system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.5;
@@ -56,6 +87,19 @@ html.theme-dark {
   --sidebar-hover: rgba(255, 255, 255, 0.06);
   --sidebar-accent: #38bdf8;
   --sidebar-accent-soft: rgba(56, 189, 248, 0.12);
+  --accent-muted: #38bdf8;
+  --control-bg: #1e293b;
+  --control-border: #475569;
+  --control-border-hover: #64748b;
+  --focus-glow-input: 0 0 0 3px rgba(56, 189, 248, 0.2);
+  --state-hover-accent: rgba(56, 189, 248, 0.1);
+  --state-selected-mix: rgba(56, 189, 248, 0.12);
+  --state-selected-mix-alt: rgba(56, 189, 248, 0.18);
+  --scrollbar-thumb: #3f4d63;
+  --scrollbar-thumb-hover: #5a6a82;
+  --scrollbar-track: var(--surface-elevated);
+
+  color-scheme: dark;
 }
 
 *,
@@ -77,6 +121,12 @@ body {
   border: none;
 }
 
+@supports (min-height: 100dvh) {
+  #root {
+    min-height: 100dvh;
+  }
+}
+
 h1,
 h2,
 h3 {
@@ -94,6 +144,145 @@ button {
   cursor: pointer;
 }
 
-input {
+input,
+textarea,
+select {
   font-family: inherit;
+}
+
+/* Native checkboxes & radios — custom, token-driven */
+input[type='checkbox'],
+input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
+  margin: 0;
+  flex-shrink: 0;
+  border: 1.5px solid var(--control-border);
+  background: var(--control-bg);
+  cursor: pointer;
+  vertical-align: middle;
+  position: relative;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+input[type='checkbox'] {
+  border-radius: var(--radius-xs);
+}
+
+input[type='radio'] {
+  border-radius: 50%;
+}
+
+input[type='checkbox']:hover:not(:disabled),
+input[type='radio']:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+}
+
+input[type='checkbox']:focus-visible,
+input[type='radio']:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+input[type='checkbox']:checked,
+input[type='radio']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -50%) rotate(42deg);
+  box-sizing: border-box;
+}
+
+input[type='checkbox']:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:indeterminate::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 2px;
+  background: #fff;
+  border: none;
+  border-radius: 1px;
+  transform: translate(-50%, -50%);
+}
+
+input[type='radio']:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+}
+
+input[type='checkbox']:disabled,
+input[type='radio']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input[type='checkbox']:disabled:checked,
+input[type='radio']:disabled:checked {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  input[type='checkbox'],
+  input[type='radio'] {
+    transition: none;
+  }
+}
+
+/* Scrollbars: themed thumbs/tracks (fixes bright scrollbars in dark mode) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }

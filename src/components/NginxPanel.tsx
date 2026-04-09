@@ -23,7 +23,7 @@ type StatusPayload = {
   platform: string
 }
 
-const NGINX_STATUS_CACHE_KEY = 'dm:panel:nginx-status'
+const NGINX_STATUS_CACHE_KEY = 'dm:panel:nginx-status-v2'
 
 function ErrorModal({
   title,
@@ -56,7 +56,7 @@ function ErrorModal({
 
 export function NginxPanel() {
   const { fetchJsonWithElevation } = useSudoElevation()
-  const { runInTerminal, showTerminal } = useTerminal()
+  const { runInTerminal, showTerminal, tabExitEvent, clearTabExitEvent } = useTerminal()
   const [status, setStatus] = useState<StatusPayload | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -93,6 +93,10 @@ export function NginxPanel() {
 
   const [modal, setModal] = useState<{ title: string; body: string } | null>(null)
   const [deleteVhostConfirmOpen, setDeleteVhostConfirmOpen] = useState(false)
+
+  const nginxLocalInstallWatchRef = useRef(false)
+  /** Bumped after a successful local HTTPS install so the editor reloads from disk. */
+  const [vhostContentEpoch, setVhostContentEpoch] = useState(0)
 
   const loadStatus = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent)
@@ -180,6 +184,21 @@ export function NginxPanel() {
   }, [])
 
   useEffect(() => {
+    if (!tabExitEvent || !nginxLocalInstallWatchRef.current) return
+    nginxLocalInstallWatchRef.current = false
+    clearTabExitEvent()
+    if (tabExitEvent.payload.exitCode === 0) {
+      void loadStatus()
+      void refreshVhosts()
+      setVhostContentEpoch((n) => n + 1)
+      setBanner({
+        type: 'ok',
+        text: 'Install HTTPS finished successfully (exit 0). Nginx status and the open vhost file were refreshed.',
+      })
+    }
+  }, [tabExitEvent, clearTabExitEvent, loadStatus, refreshVhosts])
+
+  useEffect(() => {
     if (!status?.installed || activeId === null || activeId === '__new__') {
       if (activeId === '__new__') {
         setEditorContent('')
@@ -230,7 +249,7 @@ export function NginxPanel() {
     return () => {
       cancelled = true
     }
-  }, [status?.installed, activeId, fetchJsonWithElevation])
+  }, [status?.installed, activeId, fetchJsonWithElevation, vhostContentEpoch])
 
   const startInstallInTerminal = async () => {
     setBanner(null)
@@ -390,6 +409,38 @@ export function NginxPanel() {
       setDeleteBusy(false)
     }
   }
+
+  const runNginxLocalProxyInstall = useCallback(async () => {
+    if (!activeId || activeId === '__new__') {
+      setBanner({ type: 'err', text: 'Select a virtual host file first.' })
+      return
+    }
+    setBanner(null)
+    try {
+      const qs = new URLSearchParams({ vhostId: activeId })
+      const res = await fetch(`/api/nginx/local-proxy-install-command?${qs.toString()}`)
+      const data = (await res.json()) as {
+        command?: string
+        error?: string
+        alreadyConfigured?: boolean
+        message?: string
+      }
+      if (data.alreadyConfigured) {
+        setBanner({ type: 'ok', text: data.message || 'Local proxy already present in this file.' })
+        void loadStatus()
+        setVhostContentEpoch((n) => n + 1)
+        return
+      }
+      if (!res.ok || !data.command) {
+        setBanner({ type: 'err', text: data.error || 'Could not build install script.' })
+        return
+      }
+      nginxLocalInstallWatchRef.current = true
+      runInTerminal(data.command, { label: 'nginx: Install HTTPS' })
+    } catch (e) {
+      setBanner({ type: 'err', text: e instanceof Error ? e.message : 'Request failed.' })
+    }
+  }, [activeId, loadStatus, runInTerminal])
 
   const createVhost = async () => {
     const name = newName.trim()
@@ -602,25 +653,37 @@ export function NginxPanel() {
         ) : (
           <div className="nginx-editor">
             <div className="nginx-editor__bar">
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={!activeId || editorLoading || saving || !dirty}
-                onClick={() => void save()}
-              >
-                {saving ? 'Saving…' : 'Save file'}
-              </button>
-              <button
-                type="button"
-                className="btn btn--danger"
-                disabled={!activeId || editorLoading || deleteBusy}
-                onClick={() => void openDeleteVhostConfirm()}
-              >
-                {deleteBusy ? 'Deleting…' : 'Delete file'}
-              </button>
-              <button type="button" className="btn btn--ghost" onClick={() => void refreshVhosts()}>
-                Refresh list
-              </button>
+              <div className="nginx-editor__bar-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={!activeId || editorLoading || saving || !dirty}
+                  onClick={() => void save()}
+                >
+                  {saving ? 'Saving…' : 'Save file'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--danger"
+                  disabled={!activeId || editorLoading || deleteBusy}
+                  onClick={() => void openDeleteVhostConfirm()}
+                >
+                  {deleteBusy ? 'Deleting…' : 'Delete file'}
+                </button>
+                <button type="button" className="btn btn--ghost" onClick={() => void refreshVhosts()}>
+                  Refresh list
+                </button>
+              </div>
+              {status.platform !== 'win32' && activeId && activeId !== '__new__' ? (
+                <button
+                  type="button"
+                  className="btn btn--secondary nginx-editor__install"
+                  title="Local dev only: append HTTP/HTTPS for dev-manager.test → Vite. Installs mkcert via apt/brew/etc. if missing, runs mkcert -install, creates TLS, reloads nginx. Falls back to openssl if mkcert cannot be installed. Uses sudo in the terminal."
+                  onClick={() => void runNginxLocalProxyInstall()}
+                >
+                  Install HTTPS
+                </button>
+              ) : null}
             </div>
             {editorLoading ? (
               <p className="nginx-panel__loading">Loading file…</p>

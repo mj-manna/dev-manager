@@ -1,22 +1,64 @@
 import { useEffect, useState } from 'react'
-import { Link, matchPath, NavLink, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
+import {
+  Link,
+  matchPath,
+  NavLink,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router-dom'
 import { HostEditor } from './components/HostEditor'
 import { ApachePanel } from './components/ApachePanel'
 import { NginxPanel } from './components/NginxPanel'
-import { DatabaseConnectionsPanel } from './components/DatabaseConnectionsPanel'
-import { RedisBrowserPage } from './components/RedisBrowserPage'
-import { PostgresBrowserPage } from './components/PostgresBrowserPage'
+import { DatabaseTabsLayout } from './components/DatabaseTabsLayout'
 import { PostgresLocalAdminPanel } from './components/PostgresLocalAdminPanel'
 import { DeploymentsPanel } from './components/DeploymentsPanel'
+import { HeaderJobsMenu } from './components/HeaderJobsMenu'
 import { SettingsPage } from './components/SettingsPage'
 import { useTerminal } from './terminal/TerminalContext'
 import './App.css'
+import { getConnectionById } from './database/connectionsStorage'
+import { defaultInstanceKey } from './database/openTabsStorage'
 import {
   applyThemePreference,
   getStoredThemePreference,
   setStoredThemePreference,
   type ThemePreference,
 } from './theme/themePreference'
+
+const SIDEBAR_COLLAPSED_KEY = 'dev-manager-sidebar-collapsed'
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function SidebarToggleIcon({ collapsed }: { collapsed: boolean }) {
+  const common = {
+    width: 18,
+    height: 18,
+    fill: 'none' as const,
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+  return collapsed ? (
+    <svg {...common} viewBox="0 0 24 24" aria-hidden>
+      <path d="M13 7l5 5-5 5M6 7l5 5-5 5" />
+    </svg>
+  ) : (
+    <svg {...common} viewBox="0 0 24 24" aria-hidden>
+      <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />
+    </svg>
+  )
+}
 
 type NavItem = { id: string; label: string; icon: string }
 type NavGroup = { label: string; items: readonly NavItem[] }
@@ -65,7 +107,7 @@ const pageMeta: Record<string, { title: string; sub: string }> = {
   projects: { title: 'Projects', sub: 'Repositories and workspaces' },
   deployments: {
     title: 'Deployments',
-    sub: 'Saved dev terminal groups — run pnpm dev per folder with optional PORT',
+    sub: 'Profiles, projects, and integrated terminal',
   },
   'environment-host': {
     title: 'Environment',
@@ -120,21 +162,33 @@ function sidebarNavItemIsActive(itemId: string, pathname: string): boolean {
 }
 
 /** Avoid two `aria-current="page"` when Connections is visually active under a sub-route. */
-function sidebarNavAriaCurrent(itemId: string, pathname: string, active: boolean): 'page' | undefined {
+function sidebarNavAriaCurrent(
+  itemId: string,
+  pathname: string,
+  search: string,
+  active: boolean,
+): 'page' | undefined {
   if (!active) return undefined
   if (itemId === 'database') {
-    const onListOnly = pathname === '/database' || pathname === '/database/'
+    const tab = new URLSearchParams(search).get('tab')
+    const onListOnly = (pathname === '/database' || pathname === '/database/') && !tab
     return onListOnly ? 'page' : undefined
   }
   return 'page'
 }
 
-function headerForPath(pathname: string): { title: string; sub: string } {
-  if (pathname.startsWith('/database/redis/')) {
-    return { title: 'Redis data', sub: 'Browse keys and values on this connection' }
-  }
-  if (pathname.startsWith('/database/postgresql/')) {
-    return { title: 'PostgreSQL data', sub: 'Browse schemas, tables, and rows on this connection' }
+function headerForPath(pathname: string, search: string): { title: string; sub: string } {
+  if (pathname === '/database' || pathname === '/database/') {
+    const tabId = new URLSearchParams(search).get('tab')
+    if (tabId) {
+      const c = getConnectionById(tabId)
+      if (c?.kind === 'redis') {
+        return { title: 'Redis data', sub: 'Browse keys and values on this connection' }
+      }
+      if (c?.kind === 'postgresql') {
+        return { title: 'PostgreSQL data', sub: 'Browse schemas, tables, and rows on this connection' }
+      }
+    }
   }
   if (pathname.startsWith('/database/postgresql-admin')) {
     return pageMeta['database-config']
@@ -153,6 +207,18 @@ function headerForPath(pathname: string): { title: string; sub: string } {
   }
   const k = keyByPath[pathname] ?? 'dashboard'
   return pageMeta[k] ?? pageMeta.dashboard
+}
+
+/** Old paths `/database/redis/:id` and `/database/postgresql/:id` → `/database?tab=:id`. */
+function LegacyDbBrowserRedirect() {
+  const { connectionId } = useParams<{ connectionId: string }>()
+  if (connectionId == null || connectionId === '') {
+    return <Navigate to="/database" replace />
+  }
+  const q = new URLSearchParams()
+  q.set('tab', connectionId)
+  q.set('inst', defaultInstanceKey(connectionId))
+  return <Navigate to={`/database?${q.toString()}`} replace />
 }
 
 const stats = [
@@ -315,9 +381,18 @@ function DashboardHome() {
 function AdminLayout() {
   const { toggleTerminal } = useTerminal()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => getStoredThemePreference())
   const location = useLocation()
-  const header = headerForPath(location.pathname)
+  const header = headerForPath(location.pathname, location.search)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     applyThemePreference(themePreference)
@@ -337,17 +412,33 @@ function AdminLayout() {
   }
 
   return (
-    <div className="admin">
+    <div className={`admin${sidebarCollapsed ? ' admin--sidebar-collapsed' : ''}`}>
       <aside
         id="admin-sidebar"
-        className={`admin__sidebar ${sidebarOpen ? 'admin__sidebar--open' : ''}`}
+        className={`admin__sidebar${sidebarOpen ? ' admin__sidebar--open' : ''}${sidebarCollapsed ? ' admin__sidebar--collapsed' : ''}`}
         aria-label="Main navigation"
       >
         <div className="admin__brand">
-          <NavLink to="/dashboard" className="admin__brand-link" onClick={() => setSidebarOpen(false)}>
+          <NavLink
+            to="/dashboard"
+            className="admin__brand-link"
+            title="Dev Manager"
+            onClick={() => setSidebarOpen(false)}
+          >
             <span className="admin__logo" aria-hidden />
             <span className="admin__brand-text">Dev Manager</span>
           </NavLink>
+          <button
+            type="button"
+            className="admin__sidebar-collapse-btn"
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="admin-sidebar"
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((c) => !c)}
+          >
+            <SidebarToggleIcon collapsed={sidebarCollapsed} />
+            <span className="visually-hidden">{sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}</span>
+          </button>
         </div>
         <nav className="admin__nav" aria-label="Primary">
           {navGroups.map((group) => (
@@ -364,13 +455,14 @@ function AdminLayout() {
                       key={item.id}
                       to={to}
                       className={`admin__nav-item${active ? ' admin__nav-item--active' : ''}`}
-                      aria-current={sidebarNavAriaCurrent(item.id, location.pathname, active)}
+                      title={item.label}
+                      aria-current={sidebarNavAriaCurrent(item.id, location.pathname, location.search, active)}
                       onClick={() => setSidebarOpen(false)}
                     >
                       <span className="admin__nav-icon">
                         <NavIcon name={item.icon} />
                       </span>
-                      {item.label}
+                      <span className="admin__nav-label">{item.label}</span>
                     </Link>
                   )
                 })}
@@ -381,7 +473,7 @@ function AdminLayout() {
         <div className="admin__sidebar-footer">
           <div className="admin__user-pill">
             <span className="admin__avatar" aria-hidden>AK</span>
-            <div>
+            <div className="admin__user-pill-text">
               <div className="admin__user-name">Alex Kim</div>
               <div className="admin__user-role">Admin</div>
             </div>
@@ -478,12 +570,7 @@ function AdminLayout() {
               </svg>
               <span className="admin__terminal-label">Terminal</span>
             </button>
-            <button type="button" className="admin__icon-btn" aria-label="Notifications">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <span className="admin__badge" aria-hidden />
-            </button>
+            <HeaderJobsMenu />
           </div>
         </header>
 
@@ -506,10 +593,10 @@ export default function App() {
         <Route path="environment-host" element={<HostEditor />} />
         <Route path="nginx" element={<NginxPanel />} />
         <Route path="apache" element={<ApachePanel />} />
-        <Route path="database" element={<DatabaseConnectionsPanel />} />
+        <Route path="database/redis/:connectionId" element={<LegacyDbBrowserRedirect />} />
+        <Route path="database/postgresql/:connectionId" element={<LegacyDbBrowserRedirect />} />
+        <Route path="database" element={<DatabaseTabsLayout />} />
         <Route path="database/postgresql-admin" element={<PostgresLocalAdminPanel />} />
-        <Route path="database/redis/:connectionId" element={<RedisBrowserPage />} />
-        <Route path="database/postgresql/:connectionId" element={<PostgresBrowserPage />} />
         <Route path="team" element={<DashboardHome />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

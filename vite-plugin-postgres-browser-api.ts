@@ -97,6 +97,17 @@ async function fetchTableType(
   return r.rows[0]?.table_type
 }
 
+async function fetchTableColumnNames(c: Client, schema: string, table: string): Promise<string[]> {
+  const r = await c.query<{ column_name: string }>(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = $1 AND table_name = $2
+     ORDER BY ordinal_position`,
+    [schema, table],
+  )
+  return r.rows.map((row) => row.column_name)
+}
+
 async function fetchPrimaryKeyColumns(c: Client, schema: string, table: string): Promise<string[]> {
   const r = await c.query<{ column_name: string }>(
     `SELECT kcu.column_name
@@ -229,20 +240,86 @@ async function handleTables(req: IncomingMessage, res: ServerResponse): Promise<
 }
 
 const MAX_LIMIT = 200
+const MAX_DELETE_ROWS = 200
 const MAX_OFFSET = 1_000_000
+const MAX_FILTERS = 12
+const MAX_GLOBAL_SEARCH_LEN = 500
+const MAX_FILTER_VALUE_LEN = 4000
+const MAX_GLOBAL_SEARCH_COLUMNS = 48
+
+const FILTER_OPS = new Set([
+  '=',
+  '!=',
+  '<>',
+  '<',
+  '>',
+  '<=',
+  '>=',
+  'LIKE',
+  'ILIKE',
+  'IS_NULL',
+  'IS_NOT_NULL',
+])
+
+type RowFilterIn = { column?: string; op?: string; value?: string }
+
+function sqlOp(op: string): string {
+  if (op === '!=') return '<>'
+  return op
+}
+
+function parseRowFilters(raw: unknown): { clause: string; params: unknown[] } {
+  if (raw === undefined || raw === null) return { clause: '', params: [] }
+  if (!Array.isArray(raw)) throw new Error('filters must be an array')
+  const parts: string[] = []
+  const params: unknown[] = []
+  let p = 1
+  for (const item of raw.slice(0, MAX_FILTERS)) {
+    if (typeof item !== 'object' || item === null) continue
+    const f = item as RowFilterIn
+    const col = assertIdent(f.column, 'filter column')
+    const op = f.op
+    if (typeof op !== 'string' || !FILTER_OPS.has(op)) {
+      throw new Error('Invalid filter operator')
+    }
+    const qc = quoteIdent(col)
+    if (op === 'IS_NULL') {
+      parts.push(`${qc} IS NULL`)
+    } else if (op === 'IS_NOT_NULL') {
+      parts.push(`${qc} IS NOT NULL`)
+    } else {
+      if (typeof f.value !== 'string') throw new Error('Filter value required')
+      if (f.value.length > MAX_FILTER_VALUE_LEN) throw new Error('Filter value too long')
+      const sop = sqlOp(op)
+      parts.push(`${qc} ${sop} $${p}`)
+      params.push(f.value)
+      p++
+    }
+  }
+  return { clause: parts.join(' AND '), params }
+}
 
 async function handleRows(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') {
     sendJson(res, 405, { ok: false, error: 'Method not allowed' })
     return
   }
-  let body: PgConnBody & { schema?: string; table?: string; limit?: number; offset?: number }
+  let body: PgConnBody & {
+    schema?: string
+    table?: string
+    limit?: number
+    offset?: number
+    filters?: unknown
+    globalSearch?: string
+  }
   try {
     body = JSON.parse(await readBody(req)) as PgConnBody & {
       schema?: string
       table?: string
       limit?: number
       offset?: number
+      filters?: unknown
+      globalSearch?: string
     }
   } catch {
     sendJson(res, 400, { ok: false, error: 'Invalid JSON' })
@@ -271,28 +348,71 @@ async function handleRows(req: IncomingMessage, res: ServerResponse): Promise<vo
       ? Math.min(Math.max(0, Math.floor(body.offset)), MAX_OFFSET)
       : 0
 
+  let filterClause = ''
+  let filterParams: unknown[] = []
+  try {
+    const parsed = parseRowFilters(body.filters)
+    filterClause = parsed.clause
+    filterParams = parsed.params
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: pgErr(err) })
+    return
+  }
+
+  const globalRaw = typeof body.globalSearch === 'string' ? body.globalSearch.trim() : ''
+  if (globalRaw.length > MAX_GLOBAL_SEARCH_LEN) {
+    sendJson(res, 400, { ok: false, error: 'globalSearch text is too long' })
+    return
+  }
+
   const qSchema = quoteIdent(schema)
   const qTable = quoteIdent(table)
   /* No ORDER BY: avoids errors on non-sortable first columns; order is not stable across pages. */
-  const sql = `SELECT * FROM ${qSchema}.${qTable} LIMIT $1 OFFSET $2`
 
   try {
     const payload = await withPgClient(conn, async (c) => {
-      const [r, tableType, primaryKeyColumns] = await Promise.all([
-        c.query<Record<string, unknown>>(sql, [limit, offset]),
+      const whereParts: string[] = []
+      const params: unknown[] = [...filterParams]
+      if (filterClause) whereParts.push(`(${filterClause})`)
+      if (globalRaw.length > 0) {
+        const colNames = (await fetchTableColumnNames(c, schema, table)).slice(0, MAX_GLOBAL_SEARCH_COLUMNS)
+        if (colNames.length === 0) {
+          throw new Error('No columns to search')
+        }
+        const pIdx = params.length + 1
+        const ors = colNames
+          .map((name) => `${quoteIdent(name)}::text ILIKE $${pIdx}`)
+          .join(' OR ')
+        whereParts.push(`(${ors})`)
+        params.push(`%${globalRaw}%`)
+      }
+      const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''
+      const limPlaceholder = params.length + 1
+      const offPlaceholder = params.length + 2
+      const sql = `SELECT * FROM ${qSchema}.${qTable} ${whereSql} LIMIT $${limPlaceholder} OFFSET $${offPlaceholder}`
+      const queryParams = [...params, limit, offset]
+      const countSql = `SELECT COUNT(*)::bigint AS c FROM ${qSchema}.${qTable} ${whereSql}`
+      const countParams = [...params]
+
+      const [countRes, r, tableType, primaryKeyColumns] = await Promise.all([
+        c.query<{ c: string }>(countSql, countParams),
+        c.query<Record<string, unknown>>(sql, queryParams),
         fetchTableType(c, schema, table),
         fetchPrimaryKeyColumns(c, schema, table),
       ])
+      const totalCount = Number(countRes.rows[0]?.c ?? 0)
       const columns = r.fields.map((f) => f.name)
       return {
         columns,
         rows: r.rows,
         rowCount: r.rowCount ?? r.rows.length,
+        totalCount,
         tableType: tableType ?? null,
         primaryKeyColumns,
       }
     })
     const n = payload.rows.length
+    const total = payload.totalCount
     sendJson(res, 200, {
       ok: true,
       schema,
@@ -300,9 +420,10 @@ async function handleRows(req: IncomingMessage, res: ServerResponse): Promise<vo
       columns: payload.columns,
       rows: payload.rows,
       rowCount: payload.rowCount,
+      totalCount: total,
       limit,
       offset,
-      hasMore: n >= limit,
+      hasMore: n >= limit && offset + n < total,
       tableType: payload.tableType,
       primaryKeyColumns: payload.primaryKeyColumns,
     })
@@ -416,6 +537,99 @@ async function handleUpdateCell(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+async function handleDeleteRows(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' })
+    return
+  }
+  let body: PgConnBody & {
+    schema?: string
+    table?: string
+    primaryKeys?: unknown
+  }
+  try {
+    body = JSON.parse(await readBody(req)) as PgConnBody & {
+      schema?: string
+      table?: string
+      primaryKeys?: unknown
+    }
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'Invalid JSON' })
+    return
+  }
+  const conn = parseConn(body)
+  if (!conn) {
+    sendJson(res, 400, { ok: false, error: 'host and valid port required' })
+    return
+  }
+  let schema: string
+  let table: string
+  try {
+    schema = assertIdent(body.schema, 'schema')
+    table = assertIdent(body.table, 'table')
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: pgErr(err) })
+    return
+  }
+  const raw = body.primaryKeys
+  if (!Array.isArray(raw) || raw.length === 0) {
+    sendJson(res, 400, { ok: false, error: 'primaryKeys must be a non-empty array' })
+    return
+  }
+  if (raw.length > MAX_DELETE_ROWS) {
+    sendJson(res, 400, {
+      ok: false,
+      error: `At most ${MAX_DELETE_ROWS} rows can be deleted per request`,
+    })
+    return
+  }
+
+  try {
+    const deleted = await withPgClient(conn, async (c) => {
+      const tt = await fetchTableType(c, schema, table)
+      if (tt !== 'BASE TABLE') {
+        throw new Error('Only base tables support row delete')
+      }
+
+      const pkCols = await fetchPrimaryKeyColumns(c, schema, table)
+      if (pkCols.length === 0) {
+        throw new Error('Table has no primary key')
+      }
+
+      const qSchema = quoteIdent(schema)
+      const qTable = quoteIdent(table)
+      await c.query('BEGIN')
+      try {
+        let n = 0
+        for (const item of raw) {
+          if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+            throw new Error('Each primaryKeys entry must be an object')
+          }
+          const pk = item as Record<string, unknown>
+          for (const col of pkCols) {
+            if (!(col in pk)) {
+              throw new Error(`Missing primary key value for column "${col}"`)
+            }
+          }
+          const whereParts = pkCols.map((col, i) => `${quoteIdent(col)} = $${i + 1}`)
+          const params = pkCols.map((col) => pk[col])
+          const sql = `DELETE FROM ${qSchema}.${qTable} WHERE ${whereParts.join(' AND ')}`
+          const result = await c.query(sql, params)
+          n += result.rowCount ?? 0
+        }
+        await c.query('COMMIT')
+        return n
+      } catch (e) {
+        await c.query('ROLLBACK').catch(() => {})
+        throw e
+      }
+    })
+    sendJson(res, 200, { ok: true, deleted })
+  } catch (e) {
+    sendJson(res, 200, { ok: false, error: pgErr(e) })
+  }
+}
+
 function postgresBrowserMiddleware(): Connect.NextHandleFunction {
   return (req, res, next) => {
     const url = req.url?.split('?')[0] ?? ''
@@ -433,6 +647,10 @@ function postgresBrowserMiddleware(): Connect.NextHandleFunction {
     }
     if (url === '/api/db/postgres/update-cell') {
       void handleUpdateCell(req, res)
+      return
+    }
+    if (url === '/api/db/postgres/delete-rows') {
+      void handleDeleteRows(req, res)
       return
     }
     next()

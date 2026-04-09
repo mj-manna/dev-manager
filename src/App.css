@@ -18,22 +18,36 @@
 
 .admin__sidebar {
   position: fixed;
-  inset: 0 auto 0 0;
+  top: 0;
+  left: 0;
+  bottom: 0;
   z-index: 40;
   width: var(--sidebar-width);
+  max-width: min(var(--sidebar-width), 100vw);
+  height: 100svh;
+  max-height: 100dvh;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--sidebar-border);
   color: var(--sidebar-text);
   display: flex;
   flex-direction: column;
   transform: translateX(-100%);
-  transition: transform 0.2s ease;
+  transition:
+    transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: none;
+  overscroll-behavior: contain;
 }
 
 @media (min-width: 900px) {
   .admin__sidebar {
-    position: relative;
     transform: none;
+  }
+
+  .admin.admin--sidebar-collapsed .admin__sidebar {
+    width: var(--sidebar-width-collapsed);
+    max-width: var(--sidebar-width-collapsed);
   }
 }
 
@@ -57,14 +71,61 @@
 }
 
 .admin__brand {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 22px 20px;
   border-bottom: 1px solid var(--sidebar-border);
+}
+
+.admin__sidebar-collapse-btn {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--sidebar-text);
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.15s ease;
+}
+
+.admin__sidebar-collapse-btn:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
+}
+
+.admin__sidebar-collapse-btn:active {
+  transform: scale(0.96);
+}
+
+.admin__sidebar-collapse-btn:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 2px;
+}
+
+@media (min-width: 900px) {
+  .admin__sidebar-collapse-btn {
+    display: flex;
+  }
 }
 
 .admin__brand-link {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1;
   text-decoration: none;
   color: inherit;
 }
@@ -88,17 +149,61 @@
   letter-spacing: -0.02em;
 }
 
+@media (min-width: 900px) {
+  .admin__brand-text {
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 200px;
+    opacity: 1;
+    transition:
+      max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.22s ease;
+  }
+
+  .admin__sidebar--collapsed .admin__brand-text {
+    max-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 .admin__nav {
   flex: 1;
-  padding: 12px 12px 16px;
+  min-height: 0;
+  padding: 12px 10px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.admin__nav::-webkit-scrollbar {
+  width: 7px;
+}
+
+.admin__nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin__nav::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.admin__nav::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 .admin__nav-group {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .admin__nav-group:last-of-type {
@@ -112,8 +217,28 @@
   letter-spacing: 0.07em;
   color: var(--sidebar-text);
   opacity: 0.5;
-  padding: 10px 14px 8px;
+  padding: 6px 8px 4px;
   user-select: none;
+}
+
+@media (min-width: 900px) {
+  .admin__nav-group-label {
+    transition:
+      opacity 0.22s ease,
+      max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      padding 0.3s ease,
+      margin 0.3s ease;
+    max-height: 3rem;
+  }
+
+  .admin__sidebar--collapsed .admin__nav-group-label {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin: 0;
+    overflow: hidden;
+  }
 }
 
 .admin__nav-group-items {
@@ -128,14 +253,14 @@
 .admin__nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 12px 9px 14px;
+  padding: 4px 8px 4px 10px;
   border: none;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: transparent;
   color: var(--sidebar-text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   text-align: left;
   transition: background 0.15s, color 0.15s;
@@ -156,12 +281,42 @@
 
 .admin__nav-icon {
   display: flex;
+  flex-shrink: 0;
   opacity: 0.9;
 }
 
+.admin__nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin__nav-label {
+  display: inline-block;
+}
+
+@media (min-width: 900px) {
+  .admin__nav-label {
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 200px;
+    opacity: 1;
+    vertical-align: bottom;
+    transition:
+      max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.2s ease;
+  }
+
+  .admin__sidebar--collapsed .admin__nav-label {
+    max-width: 0;
+    opacity: 0;
+  }
+}
+
 .admin__sidebar-footer {
-  padding: 16px 12px 20px;
+  flex-shrink: 0;
+  padding: 16px 12px calc(20px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--sidebar-border);
+  background: var(--sidebar-bg);
 }
 
 .admin__user-pill {
@@ -171,6 +326,72 @@
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--sidebar-hover);
+}
+
+.admin__user-pill-text {
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .admin__user-pill-text {
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 200px;
+    opacity: 1;
+    transition:
+      max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.2s ease;
+  }
+
+  .admin__sidebar--collapsed .admin__user-pill-text {
+    max-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .admin__sidebar--collapsed .admin__user-pill {
+    justify-content: center;
+    padding: 10px 8px;
+    gap: 0;
+  }
+
+  .admin__sidebar--collapsed .admin__nav {
+    padding: 8px 6px 12px;
+  }
+
+  .admin__sidebar--collapsed .admin__nav-group {
+    margin-bottom: 6px;
+  }
+
+  .admin__sidebar--collapsed .admin__nav-group-items {
+    border-left: none;
+    margin-left: 0;
+    padding-left: 0;
+    align-items: center;
+  }
+
+  .admin__sidebar--collapsed .admin__nav-item {
+    justify-content: center;
+    padding: 10px 8px;
+    border-radius: var(--radius-sm);
+  }
+
+  .admin__sidebar--collapsed .admin__brand {
+    flex-direction: column;
+    padding: 14px 8px 16px;
+    gap: 10px;
+  }
+
+  .admin__sidebar--collapsed .admin__brand-link {
+    flex: none;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .admin__sidebar--collapsed .admin__sidebar-collapse-btn {
+    width: 100%;
+    max-width: 40px;
+  }
 }
 
 .admin__avatar {
@@ -201,13 +422,23 @@
 .admin__main {
   flex: 1;
   min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
 }
 
 @media (min-width: 900px) {
   .admin__main {
-    margin-left: 0;
+    margin-left: var(--sidebar-width);
+    width: calc(100% - var(--sidebar-width));
+    transition:
+      margin-left 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .admin.admin--sidebar-collapsed .admin__main {
+    margin-left: var(--sidebar-width-collapsed);
+    width: calc(100% - var(--sidebar-width-collapsed));
   }
 }
 
@@ -440,17 +671,196 @@
   border: 2px solid var(--surface);
 }
 
+.admin__jobs-wrap {
+  position: relative;
+}
+
+.admin__jobs-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.admin__jobs-empty {
+  margin: 8px 4px 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.admin__jobs-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+}
+
+.admin__jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin__job-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 10px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+.admin__job-row--clickable {
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.admin__job-row--clickable:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.admin__job-row--static {
+  opacity: 0.88;
+}
+
+.admin__job-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin__job-kind {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.admin__job-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.admin__job-row-detail {
+  font-size: 11px;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.admin__job-row-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.admin__job-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin__job-status--running {
+  color: var(--accent-hover);
+  background: var(--sidebar-accent-soft);
+}
+
+.admin__job-status--success {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.admin__job-status--failed {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.admin__job-status--stopped {
+  color: var(--text-muted);
+  background: rgba(148, 163, 184, 0.15);
+}
+
+@keyframes admin__job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.admin__job-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: admin__job-spin 0.65s linear infinite;
+}
+
+.admin__icon-btn--pulse {
+  color: var(--accent);
+}
+
+.deployments-panel__head--toolbar {
+  justify-content: flex-end;
+}
+
+.deployments-panel__head--toolbar .deployments-panel__head-actions {
+  margin-left: 0;
+}
+
 .admin__content {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 24px 20px 40px;
+  padding: 24px 20px 24px;
 }
 
 @media (min-width: 900px) {
   .admin__content {
-    padding: 28px 28px 48px;
+    padding: 28px 28px 28px;
   }
 }
 
@@ -736,12 +1146,375 @@
   color: var(--text-strong);
 }
 
+/* Database routes: fill main below header — no outer page scroll */
+.admin:has(.database-workspace) {
+  height: 100svh;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .admin:has(.database-workspace) {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+}
+
+.admin:has(.database-workspace) .admin__main {
+  flex: 1;
+  min-height: 0;
+}
+
+.admin__content:has(.database-workspace) {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* —— Database workspace (tabs — aligned with app tokens) —— */
+.database-workspace {
+  --db-tab-strip: var(--surface-elevated);
+  --db-tab-muted: #e2e8f0;
+  --db-tab-muted-hover: #d8dee9;
+  --db-tab-ink: var(--text-strong);
+  --db-tab-ink-soft: var(--text-muted);
+
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  margin: 0;
+}
+
+html.theme-dark .database-workspace {
+  --db-tab-muted: rgba(255, 255, 255, 0.08);
+  --db-tab-muted-hover: rgba(255, 255, 255, 0.12);
+}
+
+.database-tabs-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex-shrink: 0;
+  gap: 0;
+  min-height: 44px;
+  padding: 0;
+  background: var(--db-tab-strip);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.04);
+}
+
+html.theme-dark .database-tabs-bar {
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.database-tabs-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  gap: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  padding: 8px 14px 0 14px;
+}
+
+.database-tabs-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.database-tabs-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.database-tabs-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.database-tabs-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+.database-tab-cluster {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex-shrink: 0;
+  max-width: min(240px, 46vw);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  margin-top: 4px;
+  background: var(--db-tab-muted);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  overflow: visible;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.database-tab-cluster:hover:not(.database-tab-cluster--active) {
+  background: var(--db-tab-muted-hover);
+  border-color: var(--text-muted);
+}
+
+.database-tab-cluster--active {
+  background: var(--surface);
+  position: relative;
+  z-index: 2;
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+  border-color: var(--border);
+  box-shadow:
+    0 -2px 0 var(--accent),
+    var(--shadow-sm);
+}
+
+.database-tab-cluster--postgresql .database-tab__kind {
+  background: linear-gradient(145deg, #60a5fa, #2563eb);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.database-tab-cluster--redis .database-tab__kind {
+  background: linear-gradient(145deg, #f87171, #dc2626);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.database-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 6px 9px 12px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--db-tab-ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  transition: color 0.15s ease;
+}
+
+.database-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.database-tab--list {
+  flex: 0 0 auto;
+  padding: 8px 14px 9px 12px;
+  max-width: none;
+  gap: 8px;
+}
+
+.database-tab__icon {
+  flex-shrink: 0;
+  opacity: 0.72;
+  color: var(--text-muted);
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+.database-tab--list.database-tab--active .database-tab__icon {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.database-tab--list:hover:not(.database-tab--active) .database-tab__icon {
+  opacity: 1;
+  color: var(--text-strong);
+}
+
+.database-tab__kind {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.database-tab__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-tab__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  flex-shrink: 0;
+  margin: 0 4px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--db-tab-ink-soft);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.database-tab__close:hover {
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--danger);
+}
+
+html.theme-dark .database-tab__close:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: #fca5a5;
+}
+
+.database-tab__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.database-tab--list.database-tab--active,
+.database-tab-cluster--active .database-tab {
+  color: var(--db-tab-ink);
+}
+
+.database-tab--list {
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  margin-top: 4px;
+  background: var(--db-tab-muted);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    color 0.15s ease;
+}
+
+.database-tab--list:hover:not(.database-tab--active) {
+  background: var(--db-tab-muted-hover);
+  border-color: var(--text-muted);
+  color: var(--text-strong);
+}
+
+.database-tab--list.database-tab--active {
+  background: var(--surface);
+  z-index: 2;
+  margin-bottom: -1px;
+  padding-bottom: 10px;
+  position: relative;
+  border-color: var(--border);
+  color: var(--text-strong);
+  box-shadow:
+    0 -2px 0 var(--accent),
+    var(--shadow-sm);
+}
+
+.database-workspace__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface);
+}
+
+.database-workspace__body > .panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.database-workspace__body .database-connections-panel {
+  margin: 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.database-workspace__body .postgres-data-browser-page.panel,
+.database-workspace__body .redis-data-browser-page.panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Fill viewport below header: drop global vh cap on panes inside workspace */
+.database-workspace__body .postgres-data-browser__panes.db-browser__panes,
+.database-workspace__body .redis-data-browser__panes.db-browser__panes {
+  max-height: none;
+}
+
+@media (min-width: 721px) {
+  .database-workspace__body .postgres-data-browser__panes.db-browser__panes,
+  .database-workspace__body .redis-data-browser__panes.db-browser__panes {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+/* Redis workspace: scroll keys + value payload only */
+.database-workspace__body .redis-data-browser__detail-pane .db-browser__detail-body {
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.database-workspace__body .redis-data-browser__detail-inner.redis-data-browser__value-shell {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__detail-head,
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__edit-bar {
+  flex-shrink: 0;
+}
+
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__pre,
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__table-wrap,
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__index-list,
+.database-workspace__body .redis-data-browser__value-shell .redis-data-browser__bullet-list {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 /* —— Database connections —— */
 .database-connections-panel__sub {
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--text-muted);
   font-weight: 400;
+}
+
+.database-connections-panel__sub--inline {
+  margin: 0 22px 14px;
 }
 
 .database-connections-panel__warn {
@@ -1102,9 +1875,10 @@
 .pg-admin-panel__check {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-muted);
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
   cursor: pointer;
   user-select: none;
 }
@@ -1263,6 +2037,11 @@
     row-gap: 8px;
   }
 
+  .db-browser__page-title--pg-inline {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
   .db-browser__title-line .db-browser__meta {
     flex: 1 1 100%;
     justify-content: flex-start;
@@ -1354,6 +2133,43 @@ html.theme-dark .db-browser__back-link:hover .db-browser__back-icon {
   text-overflow: ellipsis;
 }
 
+.db-browser__page-title--pg-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-align: right;
+  line-height: 1.45;
+}
+
+.db-browser__head-right .db-browser__page-title--pg-inline {
+  flex: 1 1 auto;
+}
+
+.db-browser__title-sep {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.db-browser__title-soft {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.db-browser__title-mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.88em;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .db-browser__title-line .db-browser__badge {
   flex-shrink: 0;
 }
@@ -1402,6 +2218,7 @@ html.theme-dark .db-browser__badge--postgres {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
   margin-bottom: -2px;
@@ -1418,7 +2235,7 @@ html.theme-dark .db-browser__badge--postgres {
 }
 
 .db-browser__meta::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 
@@ -1651,6 +2468,13 @@ html.theme-dark .db-browser__badge--postgres {
   color: var(--text-muted);
 }
 
+.postgres-data-browser__list-pane .db-browser__section-loading,
+.redis-data-browser__list-pane .db-browser__section-loading {
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
 .db-browser__banner {
   margin: 0;
 }
@@ -1776,46 +2600,6 @@ html.theme-dark .db-browser__badge--postgres {
   font-variant-numeric: tabular-nums;
 }
 
-.postgres-data-browser__page-size {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.postgres-data-browser__page-size-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.postgres-data-browser__page-size-select {
-  min-width: 4.5rem;
-  padding: 6px 28px 6px 10px;
-  font-size: 13px;
-  font-family: ui-monospace, monospace;
-  font-weight: 600;
-  color: var(--text-strong);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-}
-
-.postgres-data-browser__page-size-select:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-html.theme-dark .postgres-data-browser__page-size-select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-}
-
 .db-browser__pager-actions {
   display: inline-flex;
   align-items: stretch;
@@ -1861,7 +2645,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: min(72vh, 720px);
+  min-height: 0;
 }
 
 .redis-data-browser-page__body {
@@ -1876,9 +2660,9 @@ html.theme-dark .postgres-data-browser__page-size-select {
 
 .redis-data-browser__panes {
   display: grid;
-  grid-template-columns: minmax(240px, 34%) 1fr;
+  grid-template-columns: minmax(var(--db-browser-sidebar-min), var(--db-browser-sidebar-max)) 1fr;
   flex: 1;
-  min-height: min(64vh, 600px);
+  min-height: 0;
 }
 
 @media (max-width: 720px) {
@@ -1893,27 +2677,28 @@ html.theme-dark .postgres-data-browser__page-size-select {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .redis-data-browser__toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
-  padding: 12px 14px;
+  padding: 3px 9px;
   border-bottom: 1px solid var(--border);
   background: transparent;
 }
 
 .redis-data-browser__match {
   flex: 1;
-  min-width: 140px;
-  padding: 8px 10px;
+  min-width: 112px;
+  padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .redis-data-browser__match:focus {
@@ -1923,14 +2708,15 @@ html.theme-dark .postgres-data-browser__page-size-select {
 }
 
 .redis-data-browser__banner {
-  margin: 8px 12px 0;
+  margin: 3px 9px 0;
 }
 
 .redis-data-browser__key-list {
   list-style: none;
   margin: 0;
-  padding: 8px 8px 10px;
+  padding: 3px 9px 6px;
   overflow: auto;
+  overscroll-behavior: contain;
   flex: 1;
   min-height: 0;
 }
@@ -1939,14 +2725,14 @@ html.theme-dark .postgres-data-browser__page-size-select {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  margin-bottom: 3px;
+  gap: 6px;
+  padding: 3px 9px;
+  margin-bottom: 2px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -2019,6 +2805,11 @@ html.theme-dark .postgres-data-browser__page-size-select {
 
 .redis-data-browser__list-foot {
   font-size: 12px;
+}
+
+.redis-data-browser__list-foot.db-browser__list-foot {
+  padding: 6px 8px;
+  gap: 8px;
 }
 
 .redis-data-browser__muted {
@@ -2256,7 +3047,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: min(72vh, 720px);
+  min-height: 0;
 }
 
 .postgres-data-browser-page__body {
@@ -2269,9 +3060,9 @@ html.theme-dark .postgres-data-browser__page-size-select {
 
 .postgres-data-browser__panes {
   display: grid;
-  grid-template-columns: minmax(260px, 30%) 1fr;
+  grid-template-columns: minmax(var(--db-browser-sidebar-min), var(--db-browser-sidebar-max)) 1fr;
   flex: 1;
-  min-height: min(64vh, 620px);
+  min-height: 0;
 }
 
 @media (max-width: 720px) {
@@ -2286,6 +3077,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   gap: 0;
   padding: 0;
   background: var(--surface-elevated);
@@ -2295,7 +3087,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 12px 14px;
+  padding: 3px 9px;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -2313,30 +3105,76 @@ html.theme-dark .postgres-data-browser__page-size-select {
 
 .postgres-data-browser__section--tables {
   flex: 1;
-  min-height: 140px;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.postgres-data-browser__section-title {
-  margin: 0 0 10px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+.postgres-data-browser__table-search {
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+
+.postgres-data-browser__table-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.postgres-data-browser__table-search-input:focus {
+  outline: 2px solid rgba(56, 189, 248, 0.35);
+  outline-offset: 1px;
 }
 
 .postgres-data-browser__field-label {
   display: block;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-strong);
 }
 
+.postgres-data-browser__schema-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.postgres-data-browser__schema-row--trailing {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.postgres-data-browser__schema-row .postgres-data-browser__schema-select {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.postgres-data-browser__schema-reload-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.postgres-data-browser__schema-reload-svg {
+  display: block;
+}
+
 .postgres-data-browser__schema-select {
   width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 3px 9px;
+  font-size: 12px;
   font-family: ui-monospace, monospace;
   color: var(--text-strong);
   background: var(--surface);
@@ -2346,8 +3184,8 @@ html.theme-dark .postgres-data-browser__page-size-select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 40px;
+  background-position: right 9px center;
+  padding-right: 28px;
   box-shadow: none;
   transition: border-color 0.15s;
 }
@@ -2363,7 +3201,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
 }
 
 .postgres-data-browser__banner {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
 }
 
 .postgres-data-browser__mini-list {
@@ -2371,6 +3209,7 @@ html.theme-dark .postgres-data-browser__page-size-select {
   margin: 0;
   padding: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   flex: 1;
   min-height: 0;
   max-height: 22vh;
@@ -2384,14 +3223,14 @@ html.theme-dark .postgres-data-browser__page-size-select {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 3px;
+  gap: 6px;
+  padding: 3px 9px;
+  margin-bottom: 2px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -2464,7 +3303,7 @@ html.theme-dark .postgres-data-browser__type-pill--table {
 
 .postgres-data-browser__muted {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -2483,6 +3322,17 @@ html.theme-dark .postgres-data-browser__type-pill--table {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* Scroll only the table region — not the whole right pane (see .db-browser__detail-body overflow) */
+.postgres-data-browser__grid-body.db-browser__detail-body {
+  overflow: hidden;
+}
+
+.postgres-data-browser__grid-body > .postgres-data-browser__cell-banner,
+.postgres-data-browser__grid-body > .host-editor__banner {
+  flex-shrink: 0;
 }
 
 .postgres-data-browser__grid-body .db-browser__empty,
@@ -2494,11 +3344,505 @@ html.theme-dark .postgres-data-browser__type-pill--table {
   flex-shrink: 0;
 }
 
+.postgres-data-browser__grid-toolbar--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.postgres-data-browser__toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* PostgreSQL data browser — pagination bar */
+.postgres-pgbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, var(--surface-elevated) 0%, var(--surface) 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.postgres-pgbar__left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.postgres-pgbar__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.postgres-pgbar__table-id {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.postgres-pgbar__right {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  justify-content: flex-end;
+  flex: 1;
+  min-width: 0;
+}
+
+.postgres-pgbar__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.postgres-pgbar__icon-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--sidebar-accent-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.postgres-pgbar__icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.postgres-pgbar__icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.postgres-pgbar__meta {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.postgres-pgbar__total {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.postgres-pgbar__range {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+}
+
+.postgres-pgbar__page {
+  font-variant-numeric: tabular-nums;
+}
+
+.postgres-pgbar__page strong {
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.postgres-pgbar__muted {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.postgres-pgbar__spin {
+  margin-left: 2px;
+}
+
+.postgres-pgbar__perpage {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.postgres-pgbar__perpage-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.postgres-pgbar__select {
+  min-width: 4.25rem;
+  padding: 7px 30px 7px 11px;
+  font-size: 13px;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  color: var(--text-strong);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.postgres-pgbar__select:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.postgres-pgbar__select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.postgres-pgbar__select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+html.theme-dark .postgres-pgbar__select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+.postgres-pgbar__nav {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.postgres-pgbar__nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.postgres-pgbar__nav-btn:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text-strong);
+}
+
+.postgres-pgbar__nav-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.postgres-pgbar__nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .postgres-pgbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .postgres-pgbar__right {
+    justify-content: space-between;
+  }
+
+  .postgres-pgbar__meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+.postgres-data-browser__toolbar-row--search {
+  align-items: center;
+}
+
+.postgres-data-browser__search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.postgres-data-browser__search-input:focus {
+  outline: 2px solid rgba(56, 189, 248, 0.35);
+  outline-offset: 1px;
+}
+
+.postgres-data-browser__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 32px;
+  padding-left: 7px !important;
+  padding-right: 7px !important;
+  position: relative;
+}
+
+.postgres-data-browser__icon-btn-svg {
+  display: block;
+}
+
+.postgres-data-browser__icon-btn-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: var(--surface);
+  background: var(--accent, #0ea5e9);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.postgres-data-browser__icon-btn--adv-open {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+html.theme-dark .postgres-data-browser__icon-btn--adv-open {
+  background: rgba(56, 189, 248, 0.18);
+}
+
+.postgres-data-browser__adv-panel {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.postgres-data-browser__adv-help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.postgres-data-browser__adv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.postgres-data-browser__adv-select {
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.postgres-data-browser__adv-value {
+  flex: 1;
+  min-width: 100px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.postgres-data-browser__adv-value:disabled {
+  opacity: 0.45;
+}
+
+.postgres-data-browser__adv-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.postgres-data-browser__adv-apply-group {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.postgres-data-browser__filter-hint {
+  margin: 0;
+}
+
+.postgres-data-browser__filter-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.postgres-data-browser__selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  font-size: 12px;
+  color: var(--text-strong);
+}
+
+.postgres-data-browser__selection-bar-text {
+  font-weight: 600;
+}
+
+.postgres-data-browser__selection-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.postgres-data-browser__selection-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0 8px;
+}
+
+.postgres-data-browser__selection-icon-btn-svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.postgres-data-browser__delete-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.postgres-data-browser__delete-banner-text {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.postgres-data-browser__th--select {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  max-width: 2.25rem;
+  padding-left: 10px !important;
+  padding-right: 6px !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.postgres-data-browser__select-cell {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  max-width: 2.25rem;
+  padding: 8px 6px 8px 10px !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.postgres-data-browser__row-checkbox {
+  width: var(--checkbox-size-dense);
+  height: var(--checkbox-size-dense);
+  margin: 0;
+  cursor: pointer;
+}
+
+.postgres-data-browser__row-checkbox:checked::after {
+  width: 4px;
+  height: 7px;
+  border-width: 0 1.5px 1.5px 0;
+}
+
+.postgres-data-browser__row-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.postgres-data-browser__data-table tbody tr.postgres-data-browser__tr--selected td {
+  background: var(--state-selected-mix);
+}
+
+.postgres-data-browser__data-table tbody tr.postgres-data-browser__tr--selected:nth-child(even) td {
+  background: var(--state-selected-mix-alt);
+}
+
 .postgres-data-browser__table-wrap {
   margin: 0;
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -3012,8 +4356,19 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 .nginx-editor__bar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.nginx-editor__bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nginx-editor__install {
+  margin-left: auto;
 }
 
 .nginx-editor__textarea {
@@ -3168,7 +4523,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 .sudo-elevation-modal__input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+  box-shadow: var(--focus-glow-input);
 }
 
 .sudo-elevation-modal__remember {
@@ -3183,7 +4538,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 }
 
 .sudo-elevation-modal__remember input {
-  margin-top: 3px;
+  margin-top: 2px;
   flex-shrink: 0;
 }
 
@@ -3293,7 +4648,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 14px;
-  padding: 10px 14px 12px;
+  padding: 10px 10px 12px;
   border-bottom: 2px solid transparent;
   border-image: linear-gradient(
       90deg,
@@ -3546,7 +4901,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px 12px 16px;
+  padding: 4px 0 0;
   background:
     radial-gradient(ellipse 70% 50% at 15% 10%, rgba(255, 47, 227, 0.18), transparent 50%),
     radial-gradient(ellipse 60% 45% at 85% 5%, rgba(0, 255, 242, 0.16), transparent 45%),
@@ -3571,7 +4926,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 
 .app-terminal__xterm-layer .xterm {
   height: 100%;
-  padding: 4px 2px;
+  padding: 0;
 }
 
 .app-terminal__xterm-layer .xterm-viewport {
@@ -3580,16 +4935,16 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 
 .app-terminal__xterm-layer .xterm-screen {
   box-shadow:
-    inset 0 0 0 1px rgba(255, 47, 227, 0.22),
+    inset 0 1px 0 0 rgba(255, 47, 227, 0.22),
     inset 0 0 40px rgba(0, 255, 242, 0.04);
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 /* Legacy single-pane class kept for any older references */
 .app-terminal__xterm {
   flex: 1;
   min-height: 0;
-  padding: 8px 12px 16px;
+  padding: 4px 0 0;
   background:
     radial-gradient(ellipse 70% 50% at 15% 10%, rgba(255, 47, 227, 0.18), transparent 50%),
     radial-gradient(ellipse 60% 45% at 85% 5%, rgba(0, 255, 242, 0.16), transparent 45%),
@@ -3598,7 +4953,7 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 
 .app-terminal__xterm .xterm {
   height: 100%;
-  padding: 4px 2px;
+  padding: 0;
 }
 
 .app-terminal__xterm .xterm-viewport {
@@ -3607,9 +4962,9 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 
 .app-terminal__xterm .xterm-screen {
   box-shadow:
-    inset 0 0 0 1px rgba(255, 47, 227, 0.22),
+    inset 0 1px 0 0 rgba(255, 47, 227, 0.22),
     inset 0 0 40px rgba(0, 255, 242, 0.04);
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 .app-terminal .btn--ghost.btn--xs {
@@ -3750,6 +5105,22 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   max-width: 88px;
 }
 
+.deployments-panel__th-actions {
+  min-width: 220px;
+}
+
+.deployments-panel__actions-cell {
+  vertical-align: top;
+  min-width: 200px;
+}
+
+.deployments-panel__actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .deployments-panel__row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3757,28 +5128,65 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   align-items: center;
 }
 
+.deployments-panel .data-table {
+  font-size: 12px;
+}
+
+.deployments-panel .data-table th {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.deployments-panel .data-table td {
+  padding: 4px 8px;
+}
+
+.deployments-panel .data-table__name {
+  font-size: 12px;
+}
+
+.deployments-panel .deployments-panel__row-sub {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.deployments-panel .env-pill {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.deployments-panel .status {
+  font-size: 11px;
+  gap: 4px;
+}
+
+.deployments-panel .status::before {
+  width: 6px;
+  height: 6px;
+}
+
 .deployments-panel__th-drag {
-  width: 36px;
-  padding-left: 8px;
-  padding-right: 4px;
+  width: 28px;
+  padding-left: 4px;
+  padding-right: 2px;
 }
 
 .deployments-panel__drag-cell {
-  width: 36px;
+  width: 28px;
   vertical-align: middle;
-  padding-left: 8px;
-  padding-right: 4px;
+  padding-left: 4px;
+  padding-right: 2px;
 }
 
 .deployments-panel__drag-handle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 32px;
+  width: 22px;
+  height: 26px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   letter-spacing: -2px;
   cursor: grab;
@@ -3831,6 +5239,137 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
 
 .deployments-panel__row-cmd {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+@keyframes deployments-script-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.deployments-panel__script-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.deployments-panel__script-strip--inline {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  box-shadow: none;
+  padding: 4px 8px;
+  gap: 6px;
+}
+
+.deployments-panel__script-strip--loading {
+  border-style: dashed;
+  background: var(--surface-elevated);
+  box-shadow: none;
+}
+
+.deployments-panel__script-strip-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.deployments-panel__script-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: deployments-script-spin 0.65s linear infinite;
+}
+
+.deployments-panel__script-strip--ready {
+  border-color: rgba(14, 165, 233, 0.22);
+  background: rgba(14, 165, 233, 0.04);
+}
+
+html.theme-dark .deployments-panel__script-strip--ready {
+  border-color: rgba(56, 189, 248, 0.28);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.deployments-panel__runner-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--accent-hover);
+  background: var(--sidebar-accent-soft);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+html.theme-dark .deployments-panel__runner-badge {
+  color: var(--sidebar-accent);
+  border-color: rgba(56, 189, 248, 0.25);
+}
+
+.deployments-panel__script-select {
+  flex: 1 1 100px;
+  min-width: 72px;
+  max-width: 160px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-strong);
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.deployments-panel__script-select:hover {
+  border-color: var(--accent);
+}
+
+.deployments-panel__script-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
+
+html.theme-dark .deployments-panel__script-select:focus {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.22);
+}
+
+.deployments-panel__script-strip--err {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: var(--warning-bg);
+}
+
+.deployments-panel__script-strip-err-msg {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  line-height: 1.35;
+  max-width: 200px;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .deployments-panel__view-tabs {
@@ -3944,6 +5483,22 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   max-width: 120px;
 }
 
+.deployments-modal__pkg-hint {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.deployments-modal__pkg-hint--muted {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.deployments-modal__pkg-hint--warn {
+  color: var(--warning);
+  font-weight: 500;
+}
+
 .deployments-modal__confirm-text {
   margin: 0;
   font-size: 14px;
@@ -3959,6 +5514,10 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   color: var(--text-strong);
 }
 
+.settings-page__head.panel__head {
+  align-items: flex-start;
+}
+
 .settings-page__lede {
   margin: 6px 0 0;
   font-size: 14px;
@@ -3967,21 +5526,296 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   line-height: 1.5;
 }
 
-.settings-page__sections {
-  padding: 8px 22px 28px;
+.settings-page__toast.host-editor__banner {
+  margin: 0;
+  margin-top: 0;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+.settings-page__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 22px;
+  padding: 20px 22px 28px;
+  align-items: start;
+}
+
+@media (min-width: 960px) {
+  .settings-page__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 20px;
+  }
+
+  .settings-page__group--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.settings-page__kicker {
+  margin: 0 0 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+.settings-page__group--danger .settings-page__kicker {
+  color: var(--danger);
+  opacity: 0.85;
+}
+
+.settings-page__card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.settings-page__card--accent {
+  border-color: rgba(14, 165, 233, 0.22);
+  box-shadow:
+    0 1px 0 rgba(15, 23, 42, 0.04),
+    0 0 0 1px rgba(14, 165, 233, 0.06) inset;
+}
+
+.settings-page__card--danger {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: var(--danger-bg);
+  box-shadow: none;
+}
+
+.settings-page__card-head {
+  padding: 18px 18px 0;
+}
+
+.settings-page__card-head--row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.settings-page__card-head h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+}
+
+.settings-page__card-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 42rem;
+}
+
+.settings-page__card-body {
+  padding: 14px 18px 18px;
+}
+
+.settings-page__card-body--row {
+  padding-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.settings-page__pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.settings-page__pill--on {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.settings-page__pill--off {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.settings-page__metric {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.settings-page__metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--text-strong);
+}
+
+.settings-page__metric-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-page__metric-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+@media (max-width: 520px) {
+  .settings-page__metric-hint {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+.settings-page__details {
+  margin: 4px 0 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0 12px;
+}
+
+.settings-page__details-summary {
+  padding: 10px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-page__details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-page__details[open] .settings-page__details-summary {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.settings-page__dl {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: grid;
+  gap: 10px 16px;
+}
+
+.settings-page__dl-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 140px) 1fr;
+  gap: 8px 12px;
+  align-items: start;
+  font-size: 13px;
+}
+
+@media (max-width: 560px) {
+  .settings-page__dl-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-page__dl-row dt {
+  margin: 0;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.settings-page__dl-row dd {
+  margin: 0;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.settings-page__options {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
-.settings-page__section h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
+.settings-page__option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s ease;
 }
 
-.settings-page__section--danger {
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+.settings-page__option:last-child {
+  border-bottom: none;
+}
+
+.settings-page__option:hover:not(.settings-page__option--disabled) {
+  background: var(--state-hover-accent);
+}
+
+.settings-page__option input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.settings-page__option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-page__option-title {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.settings-page__option-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.settings-page__option--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .settings-page__muted {
@@ -3992,8 +5826,8 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   max-width: 48rem;
 }
 
-.settings-page__small {
-  font-size: 13px;
+.settings-page__muted--tight {
+  margin-bottom: 14px;
 }
 
 .settings-page__actions {
@@ -4008,45 +5842,120 @@ html.theme-dark .postgres-data-browser__data-table tbody tr:nth-child(even) td {
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  max-width: 40rem;
+  max-width: none;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .settings-page__legend {
   padding: 0 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
 
 .settings-page__radio {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
-  margin: 8px 0;
-  font-size: 13px;
+  margin: 10px 0;
+  font-size: 14px;
+  line-height: 1.45;
   color: var(--text);
   cursor: pointer;
 }
 
 .settings-page__radio input {
-  margin-top: 3px;
+  margin-top: 2px;
 }
 
 .settings-page__key-list {
-  margin: 8px 0 0;
+  margin: 0 0 10px;
   padding-left: 1.25rem;
   font-size: 12px;
   color: var(--text-muted);
+  line-height: 1.5;
 }
 
-.settings-page__cache-meta {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--text);
-}
-
-.settings-page__cache-keys {
-  color: var(--text-muted);
+.settings-page__alert {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
   font-size: 13px;
+  line-height: 1.5;
+  max-width: none;
+}
+
+.settings-page__alert--warn {
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.08);
+  color: var(--text-strong);
+}
+
+.settings-page__field {
+  margin: 0 0 18px;
+  max-width: 48rem;
+}
+
+.settings-page__field-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.settings-page__field-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.settings-page__field-hint code {
+  font-size: 11px;
+}
+
+.settings-page__field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.settings-page__input {
+  flex: 1;
+  min-width: min(100%, 220px);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.settings-page__input:focus {
+  border-color: rgba(14, 165, 233, 0.55);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+}
+
+.settings-page__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-page__field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .deployments-modal--confirm .modal__body {
@@ -4184,4 +6093,112 @@ html.theme-dark .data-table tbody tr:hover td {
   50% {
     opacity: 0.35;
   }
+}
+
+/* —— In-app toasts (no extra deps; see ToastProvider) —— */
+.app-toast-viewport {
+  position: fixed;
+  top: calc(var(--header-height) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.app-toast-viewport .app-toast {
+  pointer-events: auto;
+}
+
+.app-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--text-strong);
+  box-shadow: var(--shadow);
+  animation: app-toast-in 0.22s var(--ease-standard);
+}
+
+@keyframes app-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-toast__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-toast__title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.app-toast__desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.app-toast__close {
+  flex-shrink: 0;
+  margin: -4px -6px -4px 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
+}
+
+.app-toast__close:hover {
+  color: var(--text-strong);
+  background: var(--state-hover-accent);
+}
+
+.app-toast--success {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: var(--success-bg);
+}
+
+.app-toast--error {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: var(--danger-bg);
+}
+
+.app-toast--warning {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: var(--warning-bg);
+}
+
+.app-toast--info {
+  border-color: rgba(14, 165, 233, 0.4);
+  background: var(--sidebar-accent-soft);
+}
+
+html.theme-dark .app-toast--info {
+  background: rgba(56, 189, 248, 0.12);
 }

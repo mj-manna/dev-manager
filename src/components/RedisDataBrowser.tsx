@@ -47,7 +47,7 @@ function formatStringPreview(raw: string | null): { mode: 'json' | 'text'; body:
   return { mode: 'text', body: raw }
 }
 
-export function RedisDataBrowser({ connection, onBack }: { connection: DbConnection; onBack: () => void }) {
+export function RedisDataBrowser({ connection }: { connection: DbConnection }) {
   const [keys, setKeys] = useState<RedisKeyRow[]>([])
   const [cursor, setCursor] = useState<string>('0')
   const [hasMore, setHasMore] = useState(false)
@@ -153,40 +153,8 @@ export function RedisDataBrowser({ connection, onBack }: { connection: DbConnect
   )
 
   return (
-    <section className="panel redis-data-browser-page db-browser" aria-labelledby="redis-browser-title">
-      <header className="panel__head redis-data-browser-page__head db-browser__head">
-        <div className="db-browser__head-left">
-          <nav className="db-browser__nav" aria-label="Breadcrumb">
-            <button
-              type="button"
-              className="db-browser__back-link"
-              onClick={onBack}
-              aria-label="Back to database connections"
-            >
-              <span className="db-browser__back-icon" aria-hidden>
-                ←
-              </span>
-              <span className="db-browser__back-label">Connections</span>
-            </button>
-          </nav>
-        </div>
-        <div className="db-browser__head-right">
-          <div className="db-browser__title-line">
-            <h2 id="redis-browser-title" className="db-browser__page-title">
-              Data browser
-            </h2>
-            <span className="db-browser__badge db-browser__badge--redis">Redis</span>
-            <div className="db-browser__meta" aria-label="Connection details">
-              <span className="db-browser__chip db-browser__chip--name" title={connection.name}>
-                <strong>{connection.name}</strong>
-              </span>
-              <span className="db-browser__chip db-browser__chip--mono" title={`${host}:${port}`}>
-                {host}:{port}
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
+    <section className="panel redis-data-browser-page db-browser" aria-label="Redis data browser">
+      <h2 className="visually-hidden">Redis — {connection.name}</h2>
       <div className="redis-data-browser-page__body db-browser__body">
         <div className="redis-data-browser__panes db-browser__panes">
           <div className="redis-data-browser__list-pane db-browser__pane db-browser__pane--sidebar">

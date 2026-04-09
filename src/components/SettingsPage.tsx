@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildExportBundle,
   clearAllManagedLocalStorage,
@@ -7,6 +7,7 @@ import {
   notifyAppStorageChanged,
   MANAGED_LOCAL_STORAGE,
 } from '../appData/storageRegistry'
+import { collectDeploymentSlotsForAutostart } from '../deployments/autostartSnapshot'
 import { memoryCacheInvalidate, memoryCacheStats } from '../lib/memoryCache'
 import {
   applyThemePreference,
@@ -14,6 +15,29 @@ import {
   type ThemePreference,
 } from '../theme/themePreference'
 import { ConfirmDangerModal } from './ConfirmDangerModal'
+
+type LinuxAutostartGet =
+  | { supported: false; platform: string; configured?: boolean }
+  | {
+      supported: true
+      platform: string
+      configured: boolean
+      matchesCurrentProject?: boolean
+      desktopFilePath?: string
+      snapshotFilePath?: string
+      launchScriptPath?: string
+      projectRoot?: string
+      configuredProjectRoot?: string | null
+      /** Lockfile-based default */
+      detectedDevCommand?: string
+      /** From autostart snapshot when it matches this project */
+      savedRunCommand?: string | null
+      /** @deprecated alias of detectedDevCommand */
+      devCommand?: string
+      appOrigin?: string
+      snapshot?: { openBrowser?: boolean; deploymentSlots?: unknown[] } | null
+    }
+  | { error: true }
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -34,7 +58,91 @@ export function SettingsPage() {
   const [clearDataOpen, setClearDataOpen] = useState(false)
   const [clearCacheOpen, setClearCacheOpen] = useState(false)
 
+  const [linuxAuto, setLinuxAuto] = useState<LinuxAutostartGet | null>(null)
+  const [linuxAutoLoading, setLinuxAutoLoading] = useState(true)
+  const [linuxAutostartEnabled, setLinuxAutostartEnabled] = useState(false)
+  const [linuxOpenBrowser, setLinuxOpenBrowser] = useState(false)
+  const [linuxAutostartBusy, setLinuxAutostartBusy] = useState(false)
+  const [linuxRunCommand, setLinuxRunCommand] = useState('')
+
   const refreshCacheStats = useCallback(() => setCacheStats(memoryCacheStats()), [])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await fetch('/api/linux-autostart')
+        const data = (await res.json()) as LinuxAutostartGet
+        if (!alive) return
+        setLinuxAuto(data)
+        if ('supported' in data && data.supported && 'configured' in data) {
+          setLinuxAutostartEnabled(data.configured)
+          const ob = data.snapshot && typeof data.snapshot === 'object' ? data.snapshot.openBrowser : false
+          setLinuxOpenBrowser(!!ob)
+        }
+      } catch {
+        if (alive) setLinuxAuto({ error: true })
+      } finally {
+        if (alive) setLinuxAutoLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!linuxAuto || !('supported' in linuxAuto) || !linuxAuto.supported) return
+    const detected =
+      linuxAuto.detectedDevCommand ?? linuxAuto.devCommand ?? 'pnpm dev'
+    const saved = linuxAuto.savedRunCommand
+    setLinuxRunCommand(saved != null && saved !== '' ? saved : detected)
+  }, [linuxAuto])
+
+  const persistLinuxAutostart = useCallback(
+    async (enabled: boolean, openBrowserOverride?: boolean) => {
+      const openBrowser = openBrowserOverride ?? linuxOpenBrowser
+      const wasEnabled = linuxAutostartEnabled
+      const trimmedCmd = linuxRunCommand.trim()
+      setLinuxAutostartBusy(true)
+      try {
+        const res = await fetch('/api/linux-autostart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled,
+            openBrowser: enabled && openBrowser,
+            runCommand: trimmedCmd === '' ? undefined : trimmedCmd,
+            snapshot: { deploymentSlots: collectDeploymentSlotsForAutostart() },
+          }),
+        })
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (!res.ok) {
+          throw new Error(typeof data.error === 'string' ? data.error : 'Autostart request failed.')
+        }
+        setLinuxAutostartEnabled(enabled)
+        if (!enabled) setLinuxOpenBrowser(false)
+        const refresh = await fetch('/api/linux-autostart')
+        setLinuxAuto((await refresh.json()) as LinuxAutostartGet)
+        setBanner({
+          type: 'ok',
+          text: enabled
+            ? wasEnabled
+              ? 'Autostart launch script and snapshot updated with your run command.'
+              : 'Linux autostart is configured. The dev server will start on next login (log out/in or reboot to test).'
+            : 'Linux autostart entry removed from ~/.config/autostart.',
+        })
+      } catch (e) {
+        setBanner({
+          type: 'err',
+          text: e instanceof Error ? e.message : 'Could not update Linux autostart.',
+        })
+      } finally {
+        setLinuxAutostartBusy(false)
+      }
+    },
+    [linuxOpenBrowser, linuxRunCommand, linuxAutostartEnabled],
+  )
 
   const exportData = useCallback(() => {
     const bundle = buildExportBundle()
@@ -109,108 +217,314 @@ export function SettingsPage() {
     [],
   )
 
+  const autostartSlotsPreview = collectDeploymentSlotsForAutostart()
+
   return (
     <>
       <section className="panel settings-page">
-        <div className="panel__head">
+        <div className="panel__head settings-page__head">
           <div>
             <h2>Settings</h2>
             <p className="settings-page__lede">
-              Back up or restore saved browser data, and manage the optional in-memory cache used for quieter API
-              refreshes.
+              Preferences and local data for this Dev Manager install — grouped by task.
             </p>
           </div>
         </div>
 
         {banner ? (
-          <div className={`host-editor__banner host-editor__banner--${banner.type}`}>{banner.text}</div>
+          <div className={`settings-page__toast host-editor__banner host-editor__banner--${banner.type}`}>{banner.text}</div>
         ) : null}
 
-        <div className="settings-page__sections">
-          <section className="settings-page__section" aria-labelledby="settings-data-heading">
-            <h3 id="settings-data-heading">Data export &amp; import</h3>
-            <p className="settings-page__muted">
-              Includes deployments, DB connection list (including passwords stored locally), theme, and PostgreSQL UI
-              preferences. Does <strong>not</strong> include running terminals.
-            </p>
-            <div className="settings-page__actions">
-              <button type="button" className="btn btn--primary" onClick={exportData}>
-                Export all data…
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/json,.json"
-                className="visually-hidden"
-                aria-hidden
-                onChange={onImportFile}
-              />
-              <button type="button" className="btn btn--secondary" onClick={onPickImportFile}>
-                Import from file…
-              </button>
+        <div className="settings-page__grid" role="presentation">
+          <div className="settings-page__group">
+            <p className="settings-page__kicker">Backup &amp; migration</p>
+            <div className="settings-page__card">
+              <div className="settings-page__card-head">
+                <h3 id="settings-data-heading">Export &amp; import</h3>
+                <p className="settings-page__card-desc">
+                  Deployments, DB connections (including saved passwords), theme, and PostgreSQL UI state.{' '}
+                  <strong>Not</strong> running terminals.
+                </p>
+              </div>
+              <div className="settings-page__card-body">
+                <div className="settings-page__actions">
+                  <button type="button" className="btn btn--primary" onClick={exportData}>
+                    Export all data…
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/json,.json"
+                    className="visually-hidden"
+                    aria-hidden
+                    onChange={onImportFile}
+                  />
+                  <button type="button" className="btn btn--secondary" onClick={onPickImportFile}>
+                    Import from file…
+                  </button>
+                </div>
+                <fieldset className="settings-page__fieldset">
+                  <legend className="settings-page__legend">When importing</legend>
+                  <label className="settings-page__radio">
+                    <input
+                      type="radio"
+                      name="import-mode"
+                      checked={importMode === 'merge'}
+                      onChange={() => setImportMode('merge')}
+                    />
+                    Merge — only keys present in the file are written; other saved keys stay
+                  </label>
+                  <label className="settings-page__radio">
+                    <input
+                      type="radio"
+                      name="import-mode"
+                      checked={importMode === 'replace'}
+                      onChange={() => setImportMode('replace')}
+                    />
+                    Replace — clear all listed app keys first, then apply the file (missing keys stay empty)
+                  </label>
+                </fieldset>
+                <details className="settings-page__details">
+                  <summary className="settings-page__details-summary">localStorage keys included</summary>
+                  <ul className="settings-page__key-list">{managedList}</ul>
+                </details>
+              </div>
             </div>
-            <fieldset className="settings-page__fieldset">
-              <legend className="settings-page__legend">When importing</legend>
-              <label className="settings-page__radio">
-                <input
-                  type="radio"
-                  name="import-mode"
-                  checked={importMode === 'merge'}
-                  onChange={() => setImportMode('merge')}
-                />
-                Merge — only keys present in the file are written; other saved keys stay
-              </label>
-              <label className="settings-page__radio">
-                <input
-                  type="radio"
-                  name="import-mode"
-                  checked={importMode === 'replace'}
-                  onChange={() => setImportMode('replace')}
-                />
-                Replace — clear all listed app keys first, then apply the file (missing keys stay empty)
-              </label>
-            </fieldset>
-            <p className="settings-page__muted settings-page__small">
-              Keys covered:{' '}
-              <ul className="settings-page__key-list">{managedList}</ul>
-            </p>
-          </section>
+          </div>
 
-          <section className="settings-page__section" aria-labelledby="settings-cache-heading">
-            <h3 id="settings-cache-heading">Advanced cache</h3>
-            <p className="settings-page__muted">
-              Short-lived in-memory cache (default TTL ~12s) avoids redundant nginx/apache status requests during
-              background refresh. It is not persisted and clears when you reload the app.
-            </p>
-            <p className="settings-page__cache-meta">
-              Current entries: <strong>{cacheStats.size}</strong>
-              {cacheStats.keys.length > 0 ? (
-                <span className="settings-page__cache-keys" title={cacheStats.keys.join(', ')}>
-                  {' '}
-                  ({cacheStats.keys.length} key{cacheStats.keys.length === 1 ? '' : 's'})
-                </span>
-              ) : null}
-            </p>
-            <div className="settings-page__actions">
-              <button type="button" className="btn btn--ghost" onClick={refreshCacheStats}>
-                Refresh stats
-              </button>
-              <button type="button" className="btn btn--danger" onClick={() => setClearCacheOpen(true)}>
-                Clear memory cache
-              </button>
+          <div className="settings-page__group">
+            <p className="settings-page__kicker">Performance</p>
+            <div className="settings-page__card">
+              <div className="settings-page__card-head">
+                <h3 id="settings-cache-heading">Panel cache</h3>
+                <p className="settings-page__card-desc">
+                  Short-lived in-memory cache (~12s TTL) cuts duplicate nginx/apache status requests during background
+                  refresh. Clears on reload.
+                </p>
+              </div>
+              <div className="settings-page__card-body">
+                <div className="settings-page__metric">
+                  <span className="settings-page__metric-value">{cacheStats.size}</span>
+                  <span className="settings-page__metric-label">entries in memory</span>
+                  {cacheStats.keys.length > 0 ? (
+                    <span className="settings-page__metric-hint" title={cacheStats.keys.join(', ')}>
+                      {cacheStats.keys.length} key{cacheStats.keys.length === 1 ? '' : 's'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="settings-page__actions">
+                  <button type="button" className="btn btn--ghost" onClick={refreshCacheStats}>
+                    Refresh stats
+                  </button>
+                  <button type="button" className="btn btn--danger" onClick={() => setClearCacheOpen(true)}>
+                    Clear memory cache
+                  </button>
+                </div>
+              </div>
             </div>
-          </section>
+          </div>
 
-          <section className="settings-page__section settings-page__section--danger" aria-labelledby="settings-danger-heading">
-            <h3 id="settings-danger-heading">Reset browser data</h3>
-            <p className="settings-page__muted">
-              Removes every Dev Manager value from <code className="host-editor__inline-code">localStorage</code> for this
-              site. Cannot be undone.
-            </p>
-            <button type="button" className="btn btn--danger" onClick={() => setClearDataOpen(true)}>
-              Erase all saved app data…
-            </button>
-          </section>
+          <div className="settings-page__group settings-page__group--wide">
+            <p className="settings-page__kicker">System · Linux</p>
+            <div className="settings-page__card settings-page__card--accent">
+              <div className="settings-page__card-head settings-page__card-head--row">
+                <div>
+                  <h3 id="settings-linux-autostart-heading">Start on login</h3>
+                  <p className="settings-page__card-desc">
+                    XDG autostart for this repo&apos;s dev server and an optional browser open.
+                  </p>
+                </div>
+                {linuxAuto && 'supported' in linuxAuto && linuxAuto.supported ? (
+                  <span
+                    className={`settings-page__pill${linuxAutostartEnabled ? ' settings-page__pill--on' : ' settings-page__pill--off'}`}
+                    aria-live="polite"
+                  >
+                    {linuxAutostartEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                ) : null}
+              </div>
+              <div className="settings-page__card-body">
+                {linuxAutoLoading ? (
+                  <p className="settings-page__muted settings-page__muted--tight">Loading autostart status…</p>
+                ) : linuxAuto && 'error' in linuxAuto && linuxAuto.error ? (
+                  <p className="settings-page__muted settings-page__muted--tight">
+                    Could not reach the autostart API. Run <code className="host-editor__inline-code">pnpm dev</code> and
+                    open Settings again.
+                  </p>
+                ) : linuxAuto && 'supported' in linuxAuto && !linuxAuto.supported ? (
+                  <p className="settings-page__muted settings-page__muted--tight">
+                    This system is <code className="host-editor__inline-code">{linuxAuto.platform}</code>. Autostart is only
+                    set up when Dev Manager runs on Linux (writes{' '}
+                    <code className="host-editor__inline-code">~/.config/autostart/</code>).
+                  </p>
+                ) : linuxAuto && 'supported' in linuxAuto && linuxAuto.supported ? (
+                  <>
+                    <p className="settings-page__muted settings-page__muted--tight">
+                      Writes <code className="host-editor__inline-code">dev-manager.desktop</code> and a launch script that{' '}
+                      <code className="host-editor__inline-code">cd</code>s to the project and runs your command after
+                      graphical login. Snapshot JSON stores deployment paths and the command you save.
+                    </p>
+                    <div className="settings-page__field">
+                      <label className="settings-page__field-label" htmlFor="settings-linux-run-command">
+                        Run command
+                      </label>
+                      <p id="settings-linux-run-command-desc" className="settings-page__field-hint">
+                        Executed from the project directory. Detected default:{' '}
+                        <code className="host-editor__inline-code">
+                          {linuxAuto.detectedDevCommand ?? linuxAuto.devCommand ?? 'pnpm dev'}
+                        </code>
+                        . Clear the field and enable or apply to use that default.
+                      </p>
+                      <div className="settings-page__field-row">
+                        <input
+                          id="settings-linux-run-command"
+                          type="text"
+                          className="settings-page__input"
+                          autoComplete="off"
+                          spellCheck={false}
+                          value={linuxRunCommand}
+                          disabled={linuxAutostartBusy}
+                          onChange={(e) => setLinuxRunCommand(e.target.value)}
+                          placeholder={linuxAuto.detectedDevCommand ?? linuxAuto.devCommand ?? 'pnpm dev'}
+                          aria-describedby="settings-linux-run-command-desc"
+                        />
+                        <button
+                          type="button"
+                          className="btn btn--ghost"
+                          disabled={linuxAutostartBusy}
+                          onClick={() =>
+                            setLinuxRunCommand(
+                              linuxAuto.detectedDevCommand ?? linuxAuto.devCommand ?? 'pnpm dev',
+                            )
+                          }
+                        >
+                          Use detected
+                        </button>
+                      </div>
+                      {linuxAutostartEnabled ? (
+                        <div className="settings-page__field-actions">
+                          <button
+                            type="button"
+                            className="btn btn--secondary"
+                            disabled={linuxAutostartBusy}
+                            onClick={() => void persistLinuxAutostart(true)}
+                          >
+                            Apply command to autostart
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {linuxAuto.configured && linuxAuto.matchesCurrentProject === false ? (
+                      <p className="settings-page__alert settings-page__alert--warn" role="status">
+                        Autostart points at another directory. Toggle off or re-enable from this checkout to update.
+                        {linuxAuto.configuredProjectRoot ? (
+                          <>
+                            {' '}
+                            Registered: <code className="host-editor__inline-code">{linuxAuto.configuredProjectRoot}</code>
+                          </>
+                        ) : null}
+                      </p>
+                    ) : null}
+                    <dl className="settings-page__dl">
+                      {linuxAuto.projectRoot ? (
+                        <div className="settings-page__dl-row">
+                          <dt>Project</dt>
+                          <dd>
+                            <code className="host-editor__inline-code">{linuxAuto.projectRoot}</code>
+                          </dd>
+                        </div>
+                      ) : null}
+                      {linuxAuto.appOrigin ? (
+                        <div className="settings-page__dl-row">
+                          <dt>App URL</dt>
+                          <dd>
+                            <code className="host-editor__inline-code">{linuxAuto.appOrigin}</code>
+                          </dd>
+                        </div>
+                      ) : null}
+                      <div className="settings-page__dl-row">
+                        <dt>Saved command</dt>
+                        <dd>
+                          <code className="host-editor__inline-code">
+                            {linuxRunCommand.trim() ||
+                              linuxAuto.detectedDevCommand ||
+                              linuxAuto.devCommand ||
+                              'pnpm dev'}
+                          </code>
+                        </dd>
+                      </div>
+                      <div className="settings-page__dl-row">
+                        <dt>Deployments in snapshot</dt>
+                        <dd>
+                          <strong>{autostartSlotsPreview.length}</strong> path{autostartSlotsPreview.length === 1 ? '' : 's'}
+                        </dd>
+                      </div>
+                      {linuxAuto.snapshotFilePath ? (
+                        <div className="settings-page__dl-row">
+                          <dt>Snapshot file</dt>
+                          <dd>
+                            <code className="host-editor__inline-code">{linuxAuto.snapshotFilePath}</code>
+                          </dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                    <div className="settings-page__options">
+                      <label className="settings-page__option">
+                        <input
+                          type="checkbox"
+                          checked={linuxAutostartEnabled}
+                          disabled={linuxAutostartBusy}
+                          onChange={(e) => void persistLinuxAutostart(e.target.checked)}
+                        />
+                        <span className="settings-page__option-text">
+                          <span className="settings-page__option-title">Autostart dev server at login</span>
+                          <span className="settings-page__option-sub">Register with the desktop session</span>
+                        </span>
+                      </label>
+                      <label
+                        className={`settings-page__option${!linuxAutostartEnabled ? ' settings-page__option--disabled' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={linuxOpenBrowser}
+                          disabled={linuxAutostartBusy || !linuxAutostartEnabled}
+                          onChange={(e) => {
+                            const v = e.target.checked
+                            setLinuxOpenBrowser(v)
+                            if (linuxAutostartEnabled) void persistLinuxAutostart(true, v)
+                          }}
+                        />
+                        <span className="settings-page__option-text">
+                          <span className="settings-page__option-title">Open app in browser</span>
+                          <span className="settings-page__option-sub">
+                            <code className="host-editor__inline-code">xdg-open</code> after ~8s
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-page__group settings-page__group--wide settings-page__group--danger">
+            <p className="settings-page__kicker">Danger zone</p>
+            <div className="settings-page__card settings-page__card--danger">
+              <div className="settings-page__card-head">
+                <h3 id="settings-danger-heading">Reset browser data</h3>
+                <p className="settings-page__card-desc">
+                  Removes every Dev Manager value from <code className="host-editor__inline-code">localStorage</code> for
+                  this site. Cannot be undone.
+                </p>
+              </div>
+              <div className="settings-page__card-body settings-page__card-body--row">
+                <button type="button" className="btn btn--danger" onClick={() => setClearDataOpen(true)}>
+                  Erase all saved app data…
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

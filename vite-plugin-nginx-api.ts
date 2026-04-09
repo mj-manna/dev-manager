@@ -1,8 +1,10 @@
+import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
+import type { TLSSocket } from 'node:tls'
 import type { Connect } from 'vite'
 import {
   enableDebianStyleVhostSite,
@@ -28,6 +30,335 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 const SAFE_NAME = /^[a-zA-Z0-9._-]+$/
+
+/** Matches vite.config.ts `allowedHosts` default for local proxy hints. */
+export const DEV_MANAGER_LOCAL_HOSTNAME = 'dev-manager.test'
+
+function defaultViteDevPort(): number {
+  const p = Number(process.env.PORT)
+  if (Number.isFinite(p) && p > 0 && p < 65536) return p
+  return 9999
+}
+
+function defaultLocalUpstream(): string {
+  return `http://127.0.0.1:${defaultViteDevPort()}`
+}
+
+function buildLocalProxyTemplate(serverName: string, upstream: string): string {
+  const up = upstream.trim().replace(/\/$/, '')
+  return `# Local development only — reverse proxy to Dev Manager (Vite). Not for production.
+server {
+    listen 80;
+    server_name ${serverName};
+
+    location / {
+        proxy_pass ${up};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+`
+}
+
+function buildLocalHttpsAppendTemplate(
+  serverName: string,
+  upstream: string,
+  sslCertificate: string,
+  sslCertificateKey: string,
+): string {
+  const up = upstream.trim().replace(/\/$/, '')
+  return `# Dev Manager: local HTTPS (added by Dev Manager app)
+# TLS paths below: Install HTTPS installs mkcert when possible, runs mkcert -install, then writes certs here (else openssl).
+server {
+    listen 443 ssl;
+    server_name ${serverName};
+
+    ssl_certificate     ${sslCertificate};
+    ssl_certificate_key ${sslCertificateKey};
+
+    location / {
+        proxy_pass ${up};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+`
+}
+
+/** Bash-safe single-quote wrapping for paths embedded in generated install scripts. */
+function shSingleQuote(pathStr: string): string {
+  return `'${pathStr.replace(/'/g, `'\"'\"'`)}'`
+}
+
+function nginxReloadShellLine(): string {
+  return (
+    'if command -v systemctl >/dev/null 2>&1; then sudo systemctl reload nginx || sudo systemctl restart nginx; ' +
+    'elif [ "$(uname -s)" = Darwin ]; then (brew services restart nginx 2>/dev/null) || sudo nginx -s reload; ' +
+    'else sudo service nginx reload 2>/dev/null || sudo nginx -s reload; fi'
+  )
+}
+
+/** Appends HTTP and/or HTTPS blocks to the selected vhost file (idempotent markers). */
+function buildSelectedVhostHttpsInstallScript(
+  root: string,
+  targetAbsPath: string,
+  serverName: string,
+  upstream: string,
+): string {
+  const httpCore = buildLocalProxyTemplate(serverName, upstream).trim()
+  const httpBlock = `# Dev Manager: local HTTP (added by Dev Manager app)\n${httpCore}`
+  const sslDir = path.join(root, 'ssl')
+  const sslCert = path.join(sslDir, `${serverName}.crt`)
+  const sslKey = path.join(sslDir, `${serverName}.key`)
+  /** Legacy placeholder paths from older generated configs (nginx -t fails until replaced). */
+  const placeholderSslCert = `/path/to/${serverName}.pem`
+  const placeholderSslKey = `/path/to/${serverName}-key.pem`
+  const httpsBlock = buildLocalHttpsAppendTemplate(
+    serverName,
+    upstream,
+    sslCert,
+    sslKey,
+  ).trim()
+  const reload = nginxReloadShellLine()
+
+  return [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    `ROOT=${shSingleQuote(root)}`,
+    `TARGET=${shSingleQuote(targetAbsPath)}`,
+    `SN=${shSingleQuote(serverName)}`,
+    `OLD_CERT=${shSingleQuote(placeholderSslCert)}`,
+    `OLD_KEY=${shSingleQuote(placeholderSslKey)}`,
+    'echo "=== Dev Manager: append local HTTP/HTTPS to selected nginx file (localhost only — not for production) ==="',
+    'echo "File: $TARGET"',
+    `echo "Add to /etc/hosts if needed: 127.0.0.1 ${serverName}"`,
+    'if ! sudo test -f "$TARGET"; then echo "File not found: $TARGET"; exit 1; fi',
+    'if ! sudo grep -qF "Dev Manager: local HTTP" "$TARGET" 2>/dev/null; then',
+    'sudo tee -a "$TARGET" <<\'DM_APPEND_HTTP\'',
+    httpBlock,
+    'DM_APPEND_HTTP',
+    'else echo "Skipping HTTP block (Dev Manager marker already present)."; fi',
+    'if ! sudo grep -qF "Dev Manager: local HTTPS" "$TARGET" 2>/dev/null; then',
+    'sudo tee -a "$TARGET" <<\'DM_APPEND_HTTPS\'',
+    httpsBlock,
+    'DM_APPEND_HTTPS',
+    'else echo "Skipping HTTPS block (Dev Manager marker already present)."; fi',
+    'if [[ "$TARGET" == *"/sites-available/"* ]]; then',
+    '  BASE="$(basename "$TARGET")"',
+    '  EN="$ROOT/sites-enabled/$BASE"',
+    '  sudo mkdir -p "$(dirname "$EN")"',
+    '  sudo ln -sf "$TARGET" "$EN"',
+    '  echo "Linked sites-enabled: $EN -> $TARGET"',
+    'fi',
+    'CERTDIR="$ROOT/ssl"',
+    'CRT="$CERTDIR/$SN.crt"',
+    'KEY="$CERTDIR/$SN.key"',
+    'sudo mkdir -p "$CERTDIR"',
+    'DM_TLS_MODE="existing"',
+    'if ! command -v mkcert >/dev/null 2>&1; then',
+    '  echo "=== Dev Manager: mkcert not found — installing (sudo may prompt) ==="',
+    '  DM_MKC_DONE=0',
+    '  if command -v brew >/dev/null 2>&1; then',
+    '    brew install mkcert nss && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then',
+    '    sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mkcert libnss3-tools && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]] && command -v dnf >/dev/null 2>&1; then',
+    '    sudo dnf install -y mkcert nss-tools && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]] && command -v yum >/dev/null 2>&1; then',
+    '    sudo yum install -y mkcert nss-tools && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]] && command -v pacman >/dev/null 2>&1; then',
+    '    sudo pacman -Sy --needed --noconfirm mkcert nss && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]] && command -v zypper >/dev/null 2>&1; then',
+    '    sudo zypper --non-interactive install -y mkcert mozilla-nss-tools && DM_MKC_DONE=1 || true',
+    '  fi',
+    '  if [[ "$DM_MKC_DONE" -eq 0 ]]; then',
+    '    echo "Could not auto-install mkcert (unsupported package manager or network error). OpenSSL will be used for new certs if needed."',
+    '  fi',
+    'fi',
+    'if command -v mkcert >/dev/null 2>&1; then',
+    '  echo "=== Dev Manager: trusted local CA for the browser (mkcert -install) ==="',
+    '  mkcert -install || echo "WARNING: mkcert -install had issues; the browser may still warn on HTTPS."',
+    'fi',
+    'if [[ ! -f "$CRT" || ! -f "$KEY" ]]; then',
+    '  DM_CERT_OK=0',
+    '  if command -v mkcert >/dev/null 2>&1; then',
+    '    echo "Creating TLS certificate for $SN…"',
+    '    DM_TMP="$(mktemp -d)"',
+    '    if mkcert -cert-file "$DM_TMP/dm.crt" -key-file "$DM_TMP/dm.key" "$SN" localhost 127.0.0.1; then',
+    '      sudo cp "$DM_TMP/dm.crt" "$CRT"',
+    '      sudo cp "$DM_TMP/dm.key" "$KEY"',
+    '      sudo chown root:root "$CRT" "$KEY"',
+    '      sudo chmod 644 "$CRT"',
+    '      sudo chmod 600 "$KEY"',
+    '      rm -rf "$DM_TMP"',
+    '      DM_CERT_OK=1',
+    '      DM_TLS_MODE="mkcert"',
+    '      echo "TLS (mkcert): $CRT"',
+    '    else',
+    '      rm -rf "$DM_TMP"',
+    '      echo "mkcert cert generation failed; falling back to openssl…"',
+    '    fi',
+    '  fi',
+    '  if [[ "$DM_CERT_OK" -eq 0 ]]; then',
+    '    if ! command -v openssl >/dev/null 2>&1; then',
+    '      echo "Need openssl to create TLS files. Install openssl and re-run."',
+    '      exit 1',
+    '    fi',
+    '    echo "Creating self-signed certificate (browser may show a security warning)…"',
+    '    sudo openssl req -x509 -nodes -days 825 -newkey rsa:2048 -keyout "$KEY" -out "$CRT" \\',
+    '      -subj "/CN=$SN" -addext "subjectAltName=DNS:$SN,DNS:localhost,IP:127.0.0.1" 2>/dev/null || \\',
+    '    sudo openssl req -x509 -nodes -days 825 -newkey rsa:2048 -keyout "$KEY" -out "$CRT" \\',
+    '      -subj "/CN=$SN"',
+    '    DM_TLS_MODE="openssl"',
+    '    echo "TLS (self-signed): $CRT"',
+    '  fi',
+    'else',
+    '  echo "TLS files already exist: $CRT"',
+    'fi',
+    'if sudo grep -qF "$OLD_CERT" "$TARGET" 2>/dev/null || sudo grep -qF "$OLD_KEY" "$TARGET" 2>/dev/null; then',
+    '  echo "Replacing placeholder ssl_certificate paths in $TARGET …"',
+    '  TMP="${TARGET}.$$.$RANDOM.dm"',
+    '  sudo cp "$TARGET" "$TMP"',
+    '  sudo sed -e "s|$OLD_CERT|$CRT|g" -e "s|$OLD_KEY|$KEY|g" "$TMP" | sudo tee "$TARGET" >/dev/null',
+    '  sudo rm -f "$TMP"',
+    'fi',
+    'sudo nginx -t',
+    reload,
+    'echo ""',
+    'if [[ "$DM_TLS_MODE" == "mkcert" ]]; then',
+    '  echo "=== Successfully configured: https://$SN — nginx + mkcert (local HTTPS trusted in this profile) ==="',
+    'elif [[ "$DM_TLS_MODE" == "openssl" ]]; then',
+    '  echo "=== Successfully configured: https://$SN — nginx OK; TLS is self-signed (browser may warn) ==="',
+    'else',
+    '  echo "=== Successfully configured: nginx reloaded — TLS unchanged at $CRT ==="',
+    'fi',
+    'echo "Return to Dev Manager; the app refreshes when this shell exits 0."',
+    '',
+  ].join('\n')
+}
+
+function isPathUnderNginxVhostRoot(root: string, absFile: string): boolean {
+  const r = path.resolve(root)
+  const f = path.resolve(absFile)
+  const sep = path.sep
+  const prefixes = [
+    path.join(r, 'sites-available') + sep,
+    path.join(r, 'sites-enabled') + sep,
+    path.join(r, 'conf.d') + sep,
+  ]
+  return prefixes.some((p) => f.startsWith(p))
+}
+
+/** Public URL for same-origin fetches (e.g. curl | bash from the in-app terminal). */
+function requestPublicOrigin(req: IncomingMessage): string {
+  const host = req.headers.host ?? '127.0.0.1:5173'
+  const xf = req.headers['x-forwarded-proto']
+  const xf0 = (Array.isArray(xf) ? xf[0] : xf)?.split(',')[0]?.trim().toLowerCase()
+  let proto: string
+  if (xf0 === 'https' || xf0 === 'http') proto = xf0
+  else proto = (req.socket as TLSSocket)?.encrypted ? 'https' : 'http'
+  return `${proto}://${host}`
+}
+
+type LocalProxyInstallResolve =
+  | { outcome: 'script'; script: string; hostsLine: string; vhostId: string }
+  | { outcome: 'already'; message: string }
+  | { outcome: 'error'; status: number; error: string }
+
+async function resolveLocalProxyInstallScript(reqUrl: string): Promise<LocalProxyInstallResolve> {
+  if (process.platform === 'win32') {
+    return {
+      outcome: 'error',
+      status: 400,
+      error: 'Local proxy install script is not generated on Windows.',
+    }
+  }
+  const versionLine = await nginxVersionLine()
+  if (!versionLine) {
+    return { outcome: 'error', status: 400, error: 'nginx is not installed.' }
+  }
+  let vhostId = ''
+  try {
+    vhostId = new URL(reqUrl, 'http://localhost').searchParams.get('vhostId') ?? ''
+  } catch {
+    vhostId = ''
+  }
+  const trimmed = vhostId.trim()
+  if (!trimmed || trimmed === '__new__') {
+    return {
+      outcome: 'error',
+      status: 400,
+      error: 'Missing vhostId. Select a virtual host file, then run Install HTTPS again.',
+    }
+  }
+  const root = await resolveNginxRoot()
+  const upstream = defaultLocalUpstream()
+  const targetAbsPath = await resolveVhostPathFlexible(root, trimmed)
+  if (!targetAbsPath) {
+    return { outcome: 'error', status: 404, error: 'Virtual host file not found for this id.' }
+  }
+  if (!isPathUnderNginxVhostRoot(root, targetAbsPath)) {
+    return {
+      outcome: 'error',
+      status: 400,
+      error: 'Resolved path is outside the nginx vhost directories.',
+    }
+  }
+  let preContent = ''
+  try {
+    preContent = await fs.readFile(targetAbsPath, 'utf8')
+  } catch {
+    preContent = ''
+  }
+  const hasHttpMarker = preContent.includes('Dev Manager: local HTTP')
+  const hasHttpsMarker = preContent.includes('Dev Manager: local HTTPS')
+  if (hasHttpMarker && hasHttpsMarker) {
+    return {
+      outcome: 'already',
+      message:
+        'This file already includes Dev Manager local HTTP and HTTPS blocks (markers present).',
+    }
+  }
+  const script = buildSelectedVhostHttpsInstallScript(
+    root,
+    targetAbsPath,
+    DEV_MANAGER_LOCAL_HOSTNAME,
+    upstream,
+  )
+  return {
+    outcome: 'script',
+    script,
+    hostsLine: `127.0.0.1 ${DEV_MANAGER_LOCAL_HOSTNAME}`,
+    vhostId: trimmed,
+  }
+}
+
+function buildCurlPipeBashInstallCommand(req: IncomingMessage, vhostId: string): string {
+  const origin = requestPublicOrigin(req)
+  const u = new URL(`${origin}/api/nginx/local-proxy-install-script`)
+  u.searchParams.set('vhostId', vhostId)
+  const url = u.toString()
+  const curlOpts = origin.startsWith('https:') ? '-fsSk' : '-fsS'
+  return (
+    `command -v curl >/dev/null 2>&1 && curl ${curlOpts} --noproxy '*' ${shSingleQuote(url)} | bash || ` +
+    `{ echo "Install HTTPS needs curl on PATH (or update Dev Manager)."; exit 1; }`
+  )
+}
 
 function isSafeBasename(name: string): boolean {
   return (
@@ -452,6 +783,52 @@ async function handleNginxApi(
     return
   }
 
+  if (segments.length === 1 && segments[0] === 'local-proxy-install-command' && method === 'GET') {
+    const r = await resolveLocalProxyInstallScript(req.url || '/')
+    if (r.outcome === 'error') {
+      sendJson(res, r.status, { error: r.error })
+      return
+    }
+    if (r.outcome === 'already') {
+      sendJson(res, 200, {
+        alreadyConfigured: true,
+        message: r.message,
+      })
+      return
+    }
+    const command = buildCurlPipeBashInstallCommand(req, r.vhostId)
+    sendJson(res, 200, {
+      command,
+      hostsLine: r.hostsLine,
+    })
+    return
+  }
+
+  if (segments.length === 1 && segments[0] === 'local-proxy-install-script' && method === 'GET') {
+    const r = await resolveLocalProxyInstallScript(req.url || '/')
+    if (r.outcome === 'error') {
+      sendJson(res, r.status, { error: r.error })
+      return
+    }
+    if (r.outcome === 'already') {
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      res.end(
+        `#!/usr/bin/env bash
+printf '%s\n' ${shSingleQuote(r.message)}
+exit 0
+`,
+      )
+      return
+    }
+    res.statusCode = 200
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.end(r.script)
+    return
+  }
+
   if (segments.length === 1 && segments[0] === 'restart' && method === 'POST') {
     const r = await restartNginx()
     sendJson(res, r.ok ? 200 : 500, r)
@@ -635,7 +1012,7 @@ async function handleNginxApi(
       const raw = await readBody(req)
       let body: { name?: string; content?: string; sudoPassword?: string }
       try {
-        body = JSON.parse(raw) as { name?: string; content?: string; sudoPassword?: string }
+        body = JSON.parse(raw) as typeof body
       } catch {
         sendJson(res, 400, { error: 'Invalid JSON' })
         return

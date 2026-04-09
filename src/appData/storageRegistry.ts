@@ -16,6 +16,8 @@ export const MANAGED_LOCAL_STORAGE: readonly ManagedStorageEntry[] = [
   { key: 'dev-manager-theme', label: 'Theme preference' },
   { key: 'dev-manager-pg-admin-fields-v1', label: 'PostgreSQL admin form fields' },
   { key: 'dev-manager-postgres-page-size', label: 'PostgreSQL browser page size' },
+  { key: 'dev-manager-terminal-jobs-v1', label: 'Terminal job history (after refresh)' },
+  { key: 'dev-manager-deployments-running-slots-v1', label: 'Deployments (running slot ids, restore after refresh)' },
 ] as const
 
 export const MANAGED_KEY_SET = new Set(MANAGED_LOCAL_STORAGE.map((e) => e.key))

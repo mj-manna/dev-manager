@@ -39,6 +39,10 @@ export function wrapTerminalCommandWithCd(cwd: string, command: string): string 
   return `cd ${bashCdWordForPath(dir)} && ${command}`
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function TerminalTabSession({
   tab,
   isActive,
@@ -46,6 +50,7 @@ function TerminalTabSession({
   onClearPending,
   setLastReadyBanner,
   reportShellExit,
+  completeLatestRunningJobForTab,
 }: {
   tab: TerminalTab
   isActive: boolean
@@ -54,6 +59,7 @@ function TerminalTabSession({
   onClearPending: () => void
   setLastReadyBanner: (msg: string | null) => void
   reportShellExit: (p: TerminalExitPayload, tabId?: string) => void
+  completeLatestRunningJobForTab: (tabId: string, exitCode: number | null) => void
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -63,6 +69,9 @@ function TerminalTabSession({
   /** After `ready` control message; used to detect disconnect vs client-initiated close. */
   const sessionRef = useRef<'connecting' | 'ready' | 'dead'>('connecting')
   const intentionalCloseRef = useRef(false)
+  /** Set when we inject a command; PTY stays alive so we detect completion via output marker. */
+  const pendingExitMarkerUuidRef = useRef<string | null>(null)
+  const ptyTextCarryRef = useRef('')
 
   const injectRun = useCallback(
     (ws: WebSocket, term: Terminal, cmd: string) => {
@@ -70,7 +79,13 @@ function TerminalTabSession({
       term.writeln(
         `\r\n${proTermPromptArrow} \x1b[38;2;47;249;255m\x1b[1m${line.replace(/\r?\n/g, ' ')}\x1b[0m\r\n`,
       )
-      ws.send(JSON.stringify({ type: 'run', command: line }))
+      const uuid =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `dm-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+      pendingExitMarkerUuidRef.current = uuid
+      const wrapped = `{ ${line}; __dm_ec=$?; printf '\\n__DMX__%s__%s\\n' '${uuid}' "$__dm_ec"; }`
+      ws.send(JSON.stringify({ type: 'run', command: wrapped }))
       onClearPending()
     },
     [onClearPending, tab.cwd],
@@ -110,6 +125,41 @@ function TerminalTabSession({
     wsRef.current = ws
     sessionRef.current = 'connecting'
     intentionalCloseRef.current = false
+    pendingExitMarkerUuidRef.current = null
+    ptyTextCarryRef.current = ''
+
+    const dec = new TextDecoder()
+
+    const flushPtyCarry = () => {
+      const t = termRef.current
+      if (!t) return
+      let buf = ptyTextCarryRef.current
+      const uuid = pendingExitMarkerUuidRef.current
+      if (uuid) {
+        const re = new RegExp(`\\r?\\n__DMX__${escapeRegExp(uuid)}__(-?\\d+)\\r?\\n`)
+        const m = re.exec(buf)
+        if (m) {
+          t.write(buf.slice(0, m.index))
+          const code = parseInt(m[1]!, 10)
+          completeLatestRunningJobForTab(tab.id, Number.isNaN(code) ? null : code)
+          pendingExitMarkerUuidRef.current = null
+          buf = buf.slice(m.index + m[0].length)
+          ptyTextCarryRef.current = buf
+          flushPtyCarry()
+          return
+        }
+        const KEEP = 128
+        if (buf.length > KEEP) {
+          t.write(buf.slice(0, -KEEP))
+          ptyTextCarryRef.current = buf.slice(-KEEP)
+        }
+        return
+      }
+      if (buf.length) {
+        t.write(buf)
+        ptyTextCarryRef.current = ''
+      }
+    }
 
     const sendResize = () => {
       const f = fitRef.current
@@ -177,7 +227,8 @@ function TerminalTabSession({
         return
       }
       if (ev.data instanceof ArrayBuffer) {
-        term.write(new TextDecoder().decode(ev.data))
+        ptyTextCarryRef.current += dec.decode(ev.data, { stream: true })
+        flushPtyCarry()
       }
     }
 
@@ -205,6 +256,20 @@ function TerminalTabSession({
       intentionalCloseRef.current = true
       window.clearTimeout(fallbackTimer)
       ro.disconnect()
+      try {
+        ptyTextCarryRef.current += dec.decode()
+      } catch {
+        /* ignore */
+      }
+      if (ptyTextCarryRef.current.length) {
+        try {
+          term.write(ptyTextCarryRef.current)
+        } catch {
+          /* disposed */
+        }
+      }
+      ptyTextCarryRef.current = ''
+      pendingExitMarkerUuidRef.current = null
       wsRef.current = null
       termRef.current = null
       fitRef.current = null
@@ -212,7 +277,7 @@ function TerminalTabSession({
       ws.close()
       term.dispose()
     }
-  }, [tab.id, tab.cwd, setLastReadyBanner, reportShellExit])
+  }, [tab.id, tab.cwd, setLastReadyBanner, reportShellExit, completeLatestRunningJobForTab])
 
   useEffect(() => {
     if (!shellReady || !tab.pendingCommand) return
@@ -253,6 +318,7 @@ export function TerminalPane() {
     hideTerminal,
     setLastReadyBanner,
     reportShellExit,
+    completeLatestRunningJobForTab,
     lastExit,
     clearLastExit,
     lastReadyBanner,
@@ -390,6 +456,7 @@ export function TerminalPane() {
               onClearPending={() => clearTabPendingCommand(tab.id)}
               setLastReadyBanner={setLastReadyBanner}
               reportShellExit={reportShellExit}
+              completeLatestRunningJobForTab={completeLatestRunningJobForTab}
             />
           ))}
         </div>

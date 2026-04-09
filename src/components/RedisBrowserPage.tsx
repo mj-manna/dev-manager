@@ -1,12 +1,10 @@
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { getConnectionById } from '../database/connectionsStorage'
 import { RedisDataBrowser } from './RedisDataBrowser'
 
-export function RedisBrowserPage() {
-  const { connectionId } = useParams<{ connectionId: string }>()
+export function RedisBrowserPage({ connectionId }: { connectionId: string }) {
   const navigate = useNavigate()
-  const decoded = connectionId ? decodeURIComponent(connectionId) : ''
-  const conn = decoded ? getConnectionById(decoded) : undefined
+  const conn = getConnectionById(connectionId)
 
   if (!conn || conn.kind !== 'redis') {
     return (
@@ -24,5 +22,5 @@ export function RedisBrowserPage() {
     )
   }
 
-  return <RedisDataBrowser connection={conn} onBack={() => navigate('/database')} />
+  return <RedisDataBrowser connection={conn} />
 }
