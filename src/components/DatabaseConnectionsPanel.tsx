@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { notifyAppStorageChanged, STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
+import type { TerminalGroup } from '../deployments/terminalGroupsStorage'
 import {
   type ConnectionKind,
   type DbConnection,
@@ -10,6 +11,7 @@ import {
   newConnectionId,
   saveConnections,
 } from '../database/connectionsStorage'
+import { useWorkspace } from '../workspace/WorkspaceContext'
 import { ConfirmDangerModal } from './ConfirmDangerModal'
 
 const emptyForm = (kind: ConnectionKind): Omit<DbConnection, 'id'> => ({
@@ -22,9 +24,17 @@ const emptyForm = (kind: ConnectionKind): Omit<DbConnection, 'id'> => ({
   password: '',
 })
 
+function workspaceScopeLabel(groups: TerminalGroup[], groupId: string | undefined) {
+  if (!groupId) return '—'
+  const g = groups.find((x) => x.id === groupId)
+  return g?.name.trim() || 'Workspace'
+}
+
 export function DatabaseConnectionsPanel() {
   const navigate = useNavigate()
+  const { groups, effectiveGroupId } = useWorkspace()
   const [connections, setConnections] = useState<DbConnection[]>(loadConnections)
+  const [showAllConnections, setShowAllConnections] = useState(false)
   const [banner, setBanner] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   /** When set, modal saves over this connection id instead of appending. */
@@ -34,7 +44,6 @@ export function DatabaseConnectionsPanel() {
   const [form, setForm] = useState(() => emptyForm('redis'))
   const [testBusy, setTestBusy] = useState(false)
   const [testHint, setTestHint] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
-  const [browseSqlPlanned, setBrowseSqlPlanned] = useState<'mysql' | null>(null)
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -47,10 +56,15 @@ export function DatabaseConnectionsPanel() {
     return () => window.removeEventListener(STORAGE_CHANGED_EVENT, sync)
   }, [])
 
-  const openModal = useCallback(() => {
+  const visibleConnections = useMemo(() => {
+    if (showAllConnections || !effectiveGroupId) return connections
+    return connections.filter((c) => c.projectGroupId === effectiveGroupId)
+  }, [connections, showAllConnections, effectiveGroupId])
+
+  const openModal = useCallback((kind: ConnectionKind = 'redis') => {
     setEditingId(null)
     setPasswordTouched(false)
-    setForm(emptyForm('redis'))
+    setForm(emptyForm(kind))
     setBanner(null)
     setTestHint(null)
     setModalOpen(true)
@@ -155,6 +169,8 @@ export function DatabaseConnectionsPanel() {
             username,
             database,
             password,
+            projectGroupId: prevRow.projectGroupId,
+            projectSlotId: prevRow.projectSlotId,
           }
           return next
         })
@@ -173,12 +189,13 @@ export function DatabaseConnectionsPanel() {
         username,
         database,
         password: trimmedPw || undefined,
+        ...(effectiveGroupId ? { projectGroupId: effectiveGroupId } : {}),
       }
       setConnections((prev) => [...prev, row])
       closeModal()
       setBanner({ type: 'ok', text: 'Saved.' })
     },
-    [form, editingId, passwordTouched, closeModal],
+    [form, editingId, passwordTouched, closeModal, effectiveGroupId],
   )
 
   const confirmRemoveConnection = useCallback(() => {
@@ -198,16 +215,12 @@ export function DatabaseConnectionsPanel() {
 
   const openBrowse = useCallback(
     (c: DbConnection) => {
-      if (c.kind === 'redis' || c.kind === 'postgresql') {
+      if (c.kind === 'redis' || c.kind === 'postgresql' || c.kind === 'mysql') {
         const inst = crypto.randomUUID()
         const q = new URLSearchParams()
         q.set('tab', c.id)
         q.set('inst', inst)
         navigate(`/database?${q.toString()}`)
-        return
-      }
-      if (c.kind === 'mysql') {
-        setBrowseSqlPlanned('mysql')
       }
     },
     [navigate],
@@ -215,15 +228,38 @@ export function DatabaseConnectionsPanel() {
 
   return (
     <section className="panel database-connections-panel">
-      <div className="panel__head">
+      <div className="panel__head database-connections-panel__head">
         <h2>Connections</h2>
-        <button type="button" className="btn btn--primary" onClick={openModal}>
-          Add connection
-        </button>
+        <div className="database-connections-panel__head-actions">
+          {effectiveGroupId ? (
+            <label className="database-connections-panel__filter-toggle">
+              <input
+                type="checkbox"
+                checked={showAllConnections}
+                onChange={(e) => setShowAllConnections(e.target.checked)}
+              />
+              <span>Show all workspaces</span>
+            </label>
+          ) : null}
+          <button type="button" className="btn btn--ghost" onClick={() => openModal('mysql')}>
+            Add MySQL
+          </button>
+          <button type="button" className="btn btn--primary" onClick={() => openModal()}>
+            Add connection
+          </button>
+        </div>
       </div>
 
       <p className="database-connections-panel__sub database-connections-panel__sub--inline">
-        <NavLink to="/database/postgresql-admin">PostgreSQL server admin</NavLink>
+        <NavLink to="/database/servers">Server</NavLink>
+        {effectiveGroupId && !showAllConnections ? (
+          <>
+            {' · '}
+            <span className="database-connections-panel__scope-note">
+              Showing connections for the selected workspace.
+            </span>
+          </>
+        ) : null}
       </p>
 
       {banner ? (
@@ -233,6 +269,18 @@ export function DatabaseConnectionsPanel() {
       <div className="database-connections-panel__body">
         {connections.length === 0 ? (
           <p className="database-connections-panel__empty">No connections yet.</p>
+        ) : visibleConnections.length === 0 ? (
+          <p className="database-connections-panel__empty">
+            No connections saved for this workspace. Add one, or{' '}
+            <button
+              type="button"
+              className="database-connections-panel__inline-link"
+              onClick={() => setShowAllConnections(true)}
+            >
+              show all connections
+            </button>
+            .
+          </p>
         ) : (
           <div className="table-wrap">
             <table className="data-table">
@@ -240,18 +288,24 @@ export function DatabaseConnectionsPanel() {
                 <tr>
                   <th scope="col">Name</th>
                   <th scope="col">Type</th>
+                  {showAllConnections ? <th scope="col">Workspace</th> : null}
                   <th scope="col">Host:port</th>
                   <th scope="col">Details</th>
                   <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {connections.map((c) => (
+                {visibleConnections.map((c) => (
                   <tr key={c.id}>
                     <td>
                       <span className="data-table__name">{c.name}</span>
                     </td>
                     <td>{kindLabel(c.kind)}</td>
+                    {showAllConnections ? (
+                      <td className="database-connections-panel__scope-cell">
+                        {workspaceScopeLabel(groups, c.projectGroupId)}
+                      </td>
+                    ) : null}
                     <td>
                       <code className="host-editor__inline-code">
                         {c.host}:{c.port}
@@ -474,40 +528,6 @@ export function DatabaseConnectionsPanel() {
               </div>
             </div>
           </form>
-        </div>
-      ) : null}
-
-      {browseSqlPlanned === 'mysql' ? (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="db-browse-planned-title"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setBrowseSqlPlanned(null)
-          }}
-        >
-          <div className="modal database-connections-modal db-browse-planned-modal">
-            <div className="modal__head">
-              <h2 id="db-browse-planned-title">MySQL</h2>
-              <button
-                type="button"
-                className="modal__close"
-                aria-label="Close"
-                onClick={() => setBrowseSqlPlanned(null)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="modal__body database-connections-modal__body db-browse-planned-modal__body">
-              <p>In-app browsing is not available for {kindLabel(browseSqlPlanned)} yet.</p>
-            </div>
-            <div className="modal__foot">
-              <button type="button" className="btn btn--primary" onClick={() => setBrowseSqlPlanned(null)}>
-                OK
-              </button>
-            </div>
-          </div>
         </div>
       ) : null}
 

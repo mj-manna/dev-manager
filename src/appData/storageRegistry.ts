@@ -3,17 +3,32 @@
  * Keep in sync when adding new persisted UI state.
  */
 
+import {
+  clearConnectionsStorage,
+  loadConnections,
+  parseConnectionsFromExport,
+  persistConnectionsToIndexedDb,
+} from '../database/connectionsStorage'
+
 export const DEV_MANAGER_EXPORT_MARKER = 'devManagerExport' as const
 export const DEV_MANAGER_EXPORT_VERSION = 1
 
 export type ManagedStorageEntry = { key: string; label: string }
 
+/** Same key as legacy localStorage; still used inside export JSON for DB connections (stored in IndexedDB at runtime). */
+export const DB_CONNECTIONS_BUNDLE_KEY = 'dev-manager-db-connections-v1'
+
 export const MANAGED_LOCAL_STORAGE: readonly ManagedStorageEntry[] = [
   { key: 'dev-manager-terminal-groups-v2', label: 'Deployments (terminal groups)' },
-  { key: 'dev-manager-terminal-groups-active-v1', label: 'Deployments (active profile id)' },
+  { key: 'dev-manager-terminal-groups-active-v1', label: 'Deployments (active workspace id)' },
   { key: 'dev-manager-terminal-groups-v1', label: 'Deployments (legacy v1, if present)' },
-  { key: 'dev-manager-db-connections-v1', label: 'Database connections' },
+  { key: DB_CONNECTIONS_BUNDLE_KEY, label: 'Database connections (IndexedDB; included as this key in exports)' },
   { key: 'dev-manager-theme', label: 'Theme preference' },
+  { key: 'dev-manager-ui-density-v1', label: 'UI density (comfortable / compact)' },
+  { key: 'dev-manager-ui-motion-v1', label: 'Reduced UI motion preference' },
+  { key: 'dev-manager-terminal-font-scale-v1', label: 'Integrated terminal font scale' },
+  { key: 'dev-manager-sidebar-compact-labels-v1', label: 'Sidebar labels when collapsed' },
+  { key: 'dev-manager-confirm-danger-v1', label: 'Confirm destructive actions' },
   { key: 'dev-manager-pg-admin-fields-v1', label: 'PostgreSQL admin form fields' },
   { key: 'dev-manager-postgres-page-size', label: 'PostgreSQL browser page size' },
   { key: 'dev-manager-terminal-jobs-v1', label: 'Terminal job history (after refresh)' },
@@ -42,12 +57,17 @@ export function collectLocalStorageExport(): Record<string, string | null> {
   return out
 }
 
-export function buildExportBundle(): DevManagerExportBundle {
+export async function buildExportBundle(): Promise<DevManagerExportBundle> {
+  const localStorage = collectLocalStorageExport()
+  const conns = loadConnections()
+  if (conns.length > 0) {
+    localStorage[DB_CONNECTIONS_BUNDLE_KEY] = JSON.stringify(conns)
+  }
   return {
     [DEV_MANAGER_EXPORT_MARKER]: true,
     version: DEV_MANAGER_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
-    localStorage: collectLocalStorageExport(),
+    localStorage,
   }
 }
 
@@ -85,7 +105,7 @@ export function parseImportBundle(raw: string): DevManagerExportBundle | { error
   }
 }
 
-export function applyImportBundle(bundle: DevManagerExportBundle, mode: 'merge' | 'replace'): void {
+export async function applyImportBundle(bundle: DevManagerExportBundle, mode: 'merge' | 'replace'): Promise<void> {
   if (mode === 'replace') {
     for (const { key } of MANAGED_LOCAL_STORAGE) {
       try {
@@ -94,14 +114,29 @@ export function applyImportBundle(bundle: DevManagerExportBundle, mode: 'merge' 
         /* ignore */
       }
     }
+    await clearConnectionsStorage()
   }
+
   for (const [key, value] of Object.entries(bundle.localStorage)) {
     if (!MANAGED_KEY_SET.has(key)) continue
+    if (key === DB_CONNECTIONS_BUNDLE_KEY) continue
     try {
       if (value === null || value === '') localStorage.removeItem(key)
       else localStorage.setItem(key, value)
     } catch {
       /* quota */
+    }
+  }
+
+  const rawConn = bundle.localStorage[DB_CONNECTIONS_BUNDLE_KEY]
+  if (typeof rawConn === 'string' && rawConn.trim()) {
+    const fromFile = parseConnectionsFromExport(rawConn)
+    if (mode === 'replace') {
+      await persistConnectionsToIndexedDb(fromFile)
+    } else {
+      const byId = new Map(loadConnections().map((c) => [c.id, c]))
+      for (const c of fromFile) byId.set(c.id, c)
+      await persistConnectionsToIndexedDb([...byId.values()])
     }
   }
 }
@@ -114,6 +149,12 @@ export function clearAllManagedLocalStorage(): void {
       /* ignore */
     }
   }
+}
+
+/** Clears managed localStorage and the IndexedDB connections store. */
+export async function clearAllManagedStorage(): Promise<void> {
+  clearAllManagedLocalStorage()
+  await clearConnectionsStorage()
 }
 
 export const STORAGE_CHANGED_EVENT = 'dev-manager-storage-changed'

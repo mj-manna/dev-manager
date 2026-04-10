@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
 import { buildCommand, slotRunnable } from '../deployments/deploymentCommands'
 import {
   PACKAGE_JSON_SELECT_INSTALL_VALUE,
@@ -9,17 +8,13 @@ import {
 } from '../deployments/packageScripts'
 import {
   PROJECT_ENVIRONMENTS,
-  createEmptyGroup,
   createEmptySlot,
-  loadActiveGroupId,
-  loadTerminalGroups,
-  saveActiveGroupId,
-  saveTerminalGroups,
   type ProjectEnvironment,
   type TerminalGroup,
   type TerminalGroupSlot,
 } from '../deployments/terminalGroupsStorage'
 import { useTerminal } from '../terminal/TerminalContext'
+import { useWorkspace } from '../workspace/WorkspaceContext'
 import { ConfirmDangerModal } from './ConfirmDangerModal'
 
 const SLOT_DRAG_MIME = 'application/x-dev-manager-slot-index'
@@ -81,13 +76,7 @@ export function DeploymentsPanel() {
     linkDeploymentSlotToTab,
   } = useTerminal()
 
-  const [groups, setGroups] = useState<TerminalGroup[]>(() => loadTerminalGroups())
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(() => {
-    const saved = loadActiveGroupId()
-    const initial = loadTerminalGroups()
-    if (saved && initial.some((g) => g.id === saved)) return saved
-    return initial[0]?.id ?? null
-  })
+  const { setGroups, activeGroup } = useWorkspace()
 
   const runningMap = useMemo(() => {
     const out: Record<string, string> = {}
@@ -100,7 +89,6 @@ export function DeploymentsPanel() {
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [editSlotId, setEditSlotId] = useState<string | null>(null)
   const [deleteSlotId, setDeleteSlotId] = useState<string | null>(null)
-  const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null)
 
   const [formName, setFormName] = useState('')
   const [formPath, setFormPath] = useState('')
@@ -129,37 +117,6 @@ export function DeploymentsPanel() {
   const [scriptSelectBust, setScriptSelectBust] = useState<Record<string, number>>({})
 
   const [dragSlotIndex, setDragSlotIndex] = useState<number | null>(null)
-
-  useEffect(() => {
-    saveTerminalGroups(groups)
-  }, [groups])
-
-  useEffect(() => {
-    const sync = () => {
-      const nextGroups = loadTerminalGroups()
-      setGroups(nextGroups)
-      const saved = loadActiveGroupId()
-      if (saved && nextGroups.some((g) => g.id === saved)) setActiveGroupId(saved)
-      else setActiveGroupId(nextGroups[0]?.id ?? null)
-    }
-    window.addEventListener(STORAGE_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(STORAGE_CHANGED_EVENT, sync)
-  }, [])
-
-  const effectiveGroupId = useMemo(() => {
-    if (groups.length === 0) return null
-    if (activeGroupId && groups.some((g) => g.id === activeGroupId)) return activeGroupId
-    return groups[0].id
-  }, [groups, activeGroupId])
-
-  useEffect(() => {
-    if (effectiveGroupId) saveActiveGroupId(effectiveGroupId)
-  }, [effectiveGroupId])
-
-  const activeGroup = useMemo(
-    () => groups.find((g) => g.id === effectiveGroupId) ?? groups[0] ?? null,
-    [groups, effectiveGroupId],
-  )
 
   const slotsCwdFingerprint = useMemo(() => {
     if (!activeGroup) return ''
@@ -262,11 +219,6 @@ export function DeploymentsPanel() {
     }
   }, [slotsCwdFingerprint])
 
-  const pendingProfileDelete = useMemo(
-    () => (deleteProfileId ? groups.find((g) => g.id === deleteProfileId) : undefined),
-    [deleteProfileId, groups],
-  )
-
   const patchGroup = useCallback((groupId: string, fn: (g: TerminalGroup) => TerminalGroup) => {
     setGroups((gs) => gs.map((g) => (g.id === groupId ? fn(g) : g)))
   }, [])
@@ -284,19 +236,6 @@ export function DeploymentsPanel() {
     },
     [patchGroup],
   )
-
-  const addGroup = useCallback(() => {
-    const g = createEmptyGroup(`Group ${groups.length + 1}`)
-    setGroups((gs) => [...gs, g])
-    setActiveGroupId(g.id)
-  }, [groups.length])
-
-  const removeGroup = useCallback((id: string) => {
-    setGroups((gs) => {
-      const next = gs.filter((g) => g.id !== id)
-      return next.length === 0 ? [createEmptyGroup('Default')] : next
-    })
-  }, [])
 
   const resetForm = useCallback(() => {
     setFormName('')
@@ -440,18 +379,6 @@ export function DeploymentsPanel() {
     [runningMap, removeTerminalTab, addTerminalTab, showTerminal, linkDeploymentSlotToTab],
   )
 
-  const confirmRemoveProfile = useCallback(() => {
-    if (!deleteProfileId) return
-    const g = groups.find((x) => x.id === deleteProfileId)
-    if (g) {
-      for (const slot of g.slots) {
-        if (runningMap[slot.id]) stopProject(slot)
-      }
-    }
-    removeGroup(deleteProfileId)
-    setDeleteProfileId(null)
-  }, [deleteProfileId, groups, runningMap, removeGroup, stopProject])
-
   const confirmDelete = useCallback(() => {
     if (!activeGroup || !deleteSlotId) return
     const slot = activeGroup.slots.find((s) => s.id === deleteSlotId)
@@ -553,43 +480,7 @@ export function DeploymentsPanel() {
             <button type="button" className="btn btn--primary" onClick={openAddModal}>
               Add project
             </button>
-            <button type="button" className="btn btn--secondary" onClick={addGroup}>
-              New group
-            </button>
           </div>
-        </div>
-
-        <div className="deployments-panel__filters">
-          <label className="deployments-panel__field">
-            <span>Profile</span>
-            <select
-              className="deployments-panel__select"
-              value={effectiveGroupId ?? activeGroup.id}
-              onChange={(e) => setActiveGroupId(e.target.value)}
-            >
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="deployments-panel__field deployments-panel__field--grow">
-            <span>Name</span>
-            <input
-              type="text"
-              className="deployments-panel__text-input"
-              value={activeGroup.name}
-              onChange={(e) => patchGroup(activeGroup.id, (g) => ({ ...g, name: e.target.value }))}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn btn--ghost btn--xs deployments-panel__filters-action"
-            onClick={() => setDeleteProfileId(activeGroup.id)}
-          >
-            Delete profile
-          </button>
         </div>
 
         <div className="table-wrap">
@@ -611,7 +502,7 @@ export function DeploymentsPanel() {
               {activeGroup.slots.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="data-table__muted">
-                    No projects in this profile.
+                    No projects in this workspace.
                   </td>
                 </tr>
               ) : (
@@ -956,31 +847,13 @@ export function DeploymentsPanel() {
             <strong>
               {activeGroup.slots.find((s) => s.id === deleteSlotId)?.label.trim() || 'this project'}
             </strong>{' '}
-            from this profile?
+            from this workspace?
             {deleteSlotId && runningMap[deleteSlotId] ? ' The running terminal tab will be closed.' : ''}
           </>
         }
         confirmLabel="Delete"
         onCancel={() => setDeleteSlotId(null)}
         onConfirm={confirmDelete}
-      />
-
-      <ConfirmDangerModal
-        open={deleteProfileId !== null}
-        title="Delete profile?"
-        titleId="deploy-del-profile-title"
-        message={
-          <>
-            Delete profile <strong>{pendingProfileDelete?.name.trim() || 'this profile'}</strong>
-            {pendingProfileDelete
-              ? ` and all ${pendingProfileDelete.slots.length} project${pendingProfileDelete.slots.length === 1 ? '' : 's'} saved in it`
-              : ''}
-            ? Running projects in this profile will be stopped.
-          </>
-        }
-        confirmLabel="Delete profile"
-        onCancel={() => setDeleteProfileId(null)}
-        onConfirm={confirmRemoveProfile}
       />
     </>
   )

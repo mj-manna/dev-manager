@@ -6,7 +6,7 @@ export function defaultInstanceKey(connectionId: string): string {
   return `default:${connectionId}`
 }
 
-export type OpenConnTab = { kind: 'redis' | 'postgresql'; id: string; inst: string }
+export type OpenConnTab = { kind: 'redis' | 'postgresql' | 'mysql'; id: string; inst: string }
 
 function parseStoredTabs(raw: string): OpenConnTab[] {
   const arr = JSON.parse(raw) as unknown
@@ -17,7 +17,7 @@ function parseStoredTabs(raw: string): OpenConnTab[] {
       const o = x as Record<string, unknown>
       const kind = o.kind
       const id = o.id
-      if (kind !== 'redis' && kind !== 'postgresql') return null
+      if (kind !== 'redis' && kind !== 'postgresql' && kind !== 'mysql') return null
       if (typeof id !== 'string' || id === '') return null
       const inst = o.inst
       if (typeof inst === 'string' && inst !== '') {

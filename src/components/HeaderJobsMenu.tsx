@@ -136,7 +136,7 @@ export function HeaderJobsMenu() {
       {open ? (
         <div className="admin__jobs-popover" role="dialog" aria-label="Jobs">
           {terminalJobs.length === 0 ? (
-            <p className="admin__jobs-empty">No jobs yet. Start a project or run a script from Deployments.</p>
+            <p className="admin__jobs-empty">No jobs yet. Start a project or run a script from Projects.</p>
           ) : (
             <div className="admin__jobs-list">
               {sortedJobs.map((job) => (

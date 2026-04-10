@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { TERMINAL_WS_PATH } from './constants'
 import type { TerminalExitPayload, TerminalTab } from './TerminalContext'
 import { useTerminal } from './TerminalContext'
+import { getTerminalFontSizePx, UI_PREFERENCES_CHANGED_EVENT } from '../theme/uiPreferences'
 import { proTerminalFont, proTerminalTheme, proTermPromptArrow } from './xtermProTheme'
 import '@xterm/xterm/css/xterm.css'
 
@@ -43,6 +44,50 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** Possible chunk splits before `\n__DMX__` / `\r\n__DMX__` (exit marker line). */
+const MARKER_HEAD_PREFIXES = ['\r\n__DMX__', '\n__DMX__']
+
+function trailingMarkerHeadOverlap(buf: string): number {
+  let max = 0
+  for (const head of MARKER_HEAD_PREFIXES) {
+    const lim = Math.min(head.length - 1, buf.length)
+    for (let n = lim; n >= 1; n--) {
+      const suf = buf.slice(-n)
+      if (head.startsWith(suf)) {
+        max = Math.max(max, n)
+        break
+      }
+    }
+  }
+  if (buf.endsWith('\r') && !buf.endsWith('\n')) {
+    max = Math.max(max, 1)
+  }
+  return max
+}
+
+/**
+ * Stream PTY bytes to xterm while `carry` may end with an incomplete exit-marker line.
+ * (Marker format: `\\n__DMX__{uuid}__{exitCode}\\n`.)
+ */
+function writePtyStreamSafePrefix(
+  buf: string,
+  writeFn: (s: string) => void,
+  setCarry: (next: string) => void,
+) {
+  const k = trailingMarkerHeadOverlap(buf)
+  if (k === buf.length) {
+    setCarry(buf)
+    return
+  }
+  if (k === 0) {
+    writeFn(buf)
+    setCarry('')
+    return
+  }
+  writeFn(buf.slice(0, -k))
+  setCarry(buf.slice(-k))
+}
+
 function TerminalTabSession({
   tab,
   isActive,
@@ -71,13 +116,15 @@ function TerminalTabSession({
   const intentionalCloseRef = useRef(false)
   /** Set when we inject a command; PTY stays alive so we detect completion via output marker. */
   const pendingExitMarkerUuidRef = useRef<string | null>(null)
+  /** Exact `wrapped` string sent to the PTY; stripped from echoed input so only user-facing output remains. */
+  const pendingInjectEchoStripRef = useRef<string | null>(null)
   const ptyTextCarryRef = useRef('')
 
   const injectRun = useCallback(
     (ws: WebSocket, term: Terminal, cmd: string) => {
       const line = wrapTerminalCommandWithCd(tab.cwd, cmd)
       term.writeln(
-        `\r\n${proTermPromptArrow} \x1b[38;2;47;249;255m\x1b[1m${line.replace(/\r?\n/g, ' ')}\x1b[0m\r\n`,
+        `\r\n${proTermPromptArrow} \x1b[38;2;47;249;255m\x1b[1m${cmd.replace(/\r?\n/g, ' ')}\x1b[0m\r\n`,
       )
       const uuid =
         typeof crypto !== 'undefined' && crypto.randomUUID
@@ -85,6 +132,7 @@ function TerminalTabSession({
           : `dm-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
       pendingExitMarkerUuidRef.current = uuid
       const wrapped = `{ ${line}; __dm_ec=$?; printf '\\n__DMX__%s__%s\\n' '${uuid}' "$__dm_ec"; }`
+      pendingInjectEchoStripRef.current = wrapped
       ws.send(JSON.stringify({ type: 'run', command: wrapped }))
       onClearPending()
     },
@@ -101,7 +149,7 @@ function TerminalTabSession({
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 3,
-      fontSize: 14,
+      fontSize: getTerminalFontSizePx(),
       lineHeight: 1.25,
       fontFamily: proTerminalFont,
       fontWeight: '400',
@@ -126,20 +174,45 @@ function TerminalTabSession({
     sessionRef.current = 'connecting'
     intentionalCloseRef.current = false
     pendingExitMarkerUuidRef.current = null
+    pendingInjectEchoStripRef.current = null
     ptyTextCarryRef.current = ''
 
     const dec = new TextDecoder()
+
+    const bumpScroll = () => {
+      queueMicrotask(() => {
+        termRef.current?.scrollToBottom()
+      })
+    }
 
     const flushPtyCarry = () => {
       const t = termRef.current
       if (!t) return
       let buf = ptyTextCarryRef.current
+
+      const echoNeedle = pendingInjectEchoStripRef.current
+      if (echoNeedle) {
+        const idx = buf.indexOf(echoNeedle)
+        if (idx >= 0) {
+          const lineStart = buf.lastIndexOf('\n', idx - 1)
+          const cut = lineStart < 0 ? 0 : lineStart + 1
+          const tail = buf.slice(idx + echoNeedle.length).replace(/^(\r\n|\n|\r)/, '')
+          buf = buf.slice(0, cut) + tail
+          ptyTextCarryRef.current = buf
+          pendingInjectEchoStripRef.current = null
+        } else if (buf.length > 96 * 1024) {
+          pendingInjectEchoStripRef.current = null
+        } else {
+          return
+        }
+      }
+
       const uuid = pendingExitMarkerUuidRef.current
       if (uuid) {
         const re = new RegExp(`\\r?\\n__DMX__${escapeRegExp(uuid)}__(-?\\d+)\\r?\\n`)
         const m = re.exec(buf)
         if (m) {
-          t.write(buf.slice(0, m.index))
+          t.write(buf.slice(0, m.index), bumpScroll)
           const code = parseInt(m[1]!, 10)
           completeLatestRunningJobForTab(tab.id, Number.isNaN(code) ? null : code)
           pendingExitMarkerUuidRef.current = null
@@ -148,15 +221,40 @@ function TerminalTabSession({
           flushPtyCarry()
           return
         }
-        const KEEP = 128
-        if (buf.length > KEEP) {
-          t.write(buf.slice(0, -KEEP))
-          ptyTextCarryRef.current = buf.slice(-KEEP)
+        const token = `__DMX__${uuid}`
+        if (buf.includes(token)) {
+          const ti = buf.lastIndexOf(token)
+          const lineStart = buf.lastIndexOf('\n', ti - 1)
+          const start = lineStart < 0 ? 0 : lineStart + 1
+          const tail = buf.slice(start)
+          const lineRe = new RegExp(`^__DMX__${escapeRegExp(uuid)}__(-?\\d+)\\r?\\n`)
+          const done = lineRe.exec(tail)
+          if (!done) {
+            const before = buf.slice(0, start)
+            if (before) {
+              t.write(before, bumpScroll)
+            }
+            ptyTextCarryRef.current = tail
+            return
+          }
+          const before = buf.slice(0, start)
+          if (before) {
+            t.write(before, bumpScroll)
+          }
+          const code = parseInt(done[1]!, 10)
+          completeLatestRunningJobForTab(tab.id, Number.isNaN(code) ? null : code)
+          pendingExitMarkerUuidRef.current = null
+          ptyTextCarryRef.current = tail.slice(done[0].length)
+          flushPtyCarry()
+          return
         }
+        writePtyStreamSafePrefix(buf, (s) => t.write(s, bumpScroll), (next) => {
+          ptyTextCarryRef.current = next
+        })
         return
       }
       if (buf.length) {
-        t.write(buf)
+        t.write(buf, bumpScroll)
         ptyTextCarryRef.current = ''
       }
     }
@@ -252,7 +350,15 @@ function TerminalTabSession({
       }
     }
 
+    const onUiPrefs = () => {
+      const fs = getTerminalFontSizePx()
+      term.options.fontSize = fs
+      fit.fit()
+    }
+    window.addEventListener(UI_PREFERENCES_CHANGED_EVENT, onUiPrefs)
+
     return () => {
+      window.removeEventListener(UI_PREFERENCES_CHANGED_EVENT, onUiPrefs)
       intentionalCloseRef.current = true
       window.clearTimeout(fallbackTimer)
       ro.disconnect()
@@ -270,6 +376,7 @@ function TerminalTabSession({
       }
       ptyTextCarryRef.current = ''
       pendingExitMarkerUuidRef.current = null
+      pendingInjectEchoStripRef.current = null
       wsRef.current = null
       termRef.current = null
       fitRef.current = null

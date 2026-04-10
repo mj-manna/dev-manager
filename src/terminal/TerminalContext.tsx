@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { jobToastDescription, toast } from '../toast/toastBus'
+import { WORKSPACE_DELETED_EVENT, type WorkspaceDeletedDetail } from '../appData/workspaceEvents'
 import {
   loadPersistedTerminalJobs,
   markRunningJobInterruptedOnReload,
@@ -415,6 +416,22 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     tabsRef.current = tabs
   }, [tabs])
+
+  useEffect(() => {
+    const onWorkspaceDeleted = (ev: Event) => {
+      const ce = ev as CustomEvent<WorkspaceDeletedDetail>
+      const ids = new Set((ce.detail?.slotIds ?? []).filter((x) => typeof x === 'string' && x.trim()))
+      if (ids.size === 0) return
+      for (const tab of tabsRef.current) {
+        const sid = tab.projectSlotId?.trim()
+        if (sid && ids.has(sid)) {
+          removeTerminalTab(tab.id)
+        }
+      }
+    }
+    window.addEventListener(WORKSPACE_DELETED_EVENT, onWorkspaceDeleted)
+    return () => window.removeEventListener(WORKSPACE_DELETED_EVENT, onWorkspaceDeleted)
+  }, [removeTerminalTab])
 
   /** Deployment jobs tied to a slot keep "running" across reload; stop them if no tab exists (slot removed / restore failed). */
   useEffect(() => {

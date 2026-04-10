@@ -1,9 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { STORAGE_CHANGED_EVENT } from '../appData/storageRegistry'
 import { useTerminal } from '../terminal/TerminalContext'
+import { useWorkspace } from '../workspace/WorkspaceContext'
 import { buildCommand, findSlotById, slotRunnable } from './deploymentCommands'
 import { loadPersistedRunningSlotIds, savePersistedRunningSlotIds } from './deploymentsRunningStorage'
-import { loadTerminalGroups, type TerminalGroup } from './terminalGroupsStorage'
 
 const DM_RESTORE_MARK = '__dmDeploymentsRestoredForLoad'
 const DM_TASK_RESTORE_MARK = '__dmDeploymentTasksRestoredForLoad'
@@ -30,14 +29,8 @@ export function DeploymentsSessionRestore() {
     runInTerminal,
     terminalJobs,
   } = useTerminal()
-  const [groups, setGroups] = useState<TerminalGroup[]>(() => loadTerminalGroups())
+  const { groups } = useWorkspace()
   const [persistReady, setPersistReady] = useState(() => typeof globalThis.window === 'undefined')
-
-  useEffect(() => {
-    const sync = () => setGroups(loadTerminalGroups())
-    window.addEventListener(STORAGE_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(STORAGE_CHANGED_EVENT, sync)
-  }, [])
 
   useLayoutEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- gate localStorage persist until slot restore finishes */

@@ -6,9 +6,9 @@ import { TableDragScrollArea } from './TableDragScrollArea'
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number]
 
-const PAGE_SIZE_STORAGE_KEY = 'dev-manager-postgres-page-size'
-/** Matches vite-plugin-postgres-browser-api MAX_OFFSET for last-page navigation. */
-const PG_BROWSER_MAX_OFFSET = 1_000_000
+const PAGE_SIZE_STORAGE_KEY = 'dev-manager-mysql-page-size'
+/** Matches vite-plugin-mysql-browser-api MAX_OFFSET for last-page navigation. */
+const MYSQL_BROWSER_MAX_OFFSET = 1_000_000
 
 const PG_FILTER_OPS = [
   { value: '=', label: '= equals' },
@@ -63,12 +63,13 @@ function readStoredPageSize(): PageSizeOption {
   return 100
 }
 
-function pgConnBody(c: DbConnection) {
+function mysqlConnBody(c: DbConnection) {
+  const db = c.database?.trim()
   return {
     host: c.host,
     port: c.port,
-    username: c.username?.trim() || 'postgres',
-    database: c.database?.trim() || 'postgres',
+    username: c.username?.trim() || 'root',
+    ...(db ? { database: db } : {}),
     password: c.password?.trim() || undefined,
   }
 }
@@ -146,8 +147,8 @@ function dedupePrimaryKeyRows(
   return out
 }
 
-export function PostgresDataBrowser({ connection }: { connection: DbConnection }) {
-  const base = useMemo(() => pgConnBody(connection), [
+export function MysqlDataBrowser({ connection }: { connection: DbConnection }) {
+  const base = useMemo(() => mysqlConnBody(connection), [
     connection.host,
     connection.port,
     connection.username,
@@ -205,21 +206,26 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
     setSchemasLoading(true)
     setSchemasError(null)
     try {
-      const res = await fetch('/api/db/postgres/schemas', {
+      const res = await fetch('/api/db/mysql/schemas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(base),
       })
       const data = (await res.json()) as { ok?: boolean; schemas?: string[]; error?: string }
       if (!data.ok) {
-        setSchemasError(data.error || 'Failed to list schemas.')
+        setSchemasError(data.error || 'Failed to list databases.')
         setSchemas([])
         setSelectedSchema(null)
         return
       }
       const list = data.schemas ?? []
       setSchemas(list)
-      setSelectedSchema((prev) => (prev && list.includes(prev) ? prev : list[0] ?? null))
+      const declared = connection.database?.trim() ?? ''
+      setSelectedSchema((prev) => {
+        if (prev && list.includes(prev)) return prev
+        if (declared && list.includes(declared)) return declared
+        return list[0] ?? null
+      })
     } catch (e) {
       setSchemasError(e instanceof Error ? e.message : 'Request failed.')
       setSchemas([])
@@ -227,7 +233,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
     } finally {
       setSchemasLoading(false)
     }
-  }, [base])
+  }, [base, connection.database])
 
   useEffect(() => {
     setSelectedTable(null)
@@ -243,7 +249,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
       setTablesLoading(true)
       setTablesError(null)
       try {
-        const res = await fetch('/api/db/postgres/tables', {
+        const res = await fetch('/api/db/mysql/tables', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...base, schema }),
@@ -313,7 +319,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
       setRowsLoading(true)
       setRowsError(null)
       try {
-        const res = await fetch('/api/db/postgres/rows', {
+        const res = await fetch('/api/db/mysql/rows', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -491,7 +497,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
     }
     setDeleteBusy(true)
     try {
-      const res = await fetch('/api/db/postgres/delete-rows', {
+      const res = await fetch('/api/db/mysql/delete-rows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -557,7 +563,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
     setCellSaveError(null)
     const primaryKey = Object.fromEntries(primaryKeyColumns.map((k) => [k, row[k]]))
     try {
-      const res = await fetch('/api/db/postgres/update-cell', {
+      const res = await fetch('/api/db/mysql/update-cell', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -626,7 +632,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
     totalRowCount != null ? Math.max(1, Math.ceil(totalRowCount / pageSize)) : null
   const lastPageOffset =
     totalRowCount != null && totalRowCount > 0
-      ? Math.min(PG_BROWSER_MAX_OFFSET, (Math.max(1, Math.ceil(totalRowCount / pageSize)) - 1) * pageSize)
+      ? Math.min(MYSQL_BROWSER_MAX_OFFSET, (Math.max(1, Math.ceil(totalRowCount / pageSize)) - 1) * pageSize)
       : 0
   const paginationNextDisabled =
     rowsLoading ||
@@ -730,14 +736,14 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
   const hasActiveFilters = appliedFilters.length > 0 || appliedGlobalSearch.length > 0
 
   return (
-    <section className="panel postgres-data-browser-page db-browser" aria-label="PostgreSQL data browser">
-      <h2 className="visually-hidden">PostgreSQL — {connection.name}</h2>
+    <section className="panel postgres-data-browser-page db-browser" aria-label="MySQL data browser">
+      <h2 className="visually-hidden">MySQL — {connection.name}</h2>
       <div className="postgres-data-browser-page__body db-browser__body">
         <div className="postgres-data-browser__panes db-browser__panes">
           <div className="postgres-data-browser__list-pane db-browser__pane db-browser__pane--sidebar">
             <div className="postgres-data-browser__section postgres-data-browser__section--schemas">
-              <label className="postgres-data-browser__field-label" htmlFor="pg-schema-select">
-                Schema
+              <label className="postgres-data-browser__field-label" htmlFor="mysql-db-select">
+                Database
               </label>
               {schemasError ? (
                 <div className="host-editor__banner host-editor__banner--err postgres-data-browser__banner">
@@ -749,7 +755,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
                   <button
                     type="button"
                     className="btn btn--ghost btn--xs postgres-data-browser__schema-reload-btn"
-                    title="Reload schemas, table list, and data from page 1"
+                    title="Reload databases, table list, and data from page 1"
                     aria-label="Reload all"
                     disabled={refreshBusy || schemasLoading || tablesLoading}
                     onClick={() => void reloadAll()}
@@ -761,16 +767,16 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
               {schemasLoading ? (
                 <div className="db-browser__section-loading" role="status">
                   <span className="db-browser__spinner" aria-hidden />
-                  Loading schemas…
+                  Loading databases…
                 </div>
               ) : schemas.length === 0 ? (
                 <>
-                  <p className="postgres-data-browser__muted">No schemas available.</p>
+                  <p className="postgres-data-browser__muted">No databases available.</p>
                   <div className="postgres-data-browser__schema-row postgres-data-browser__schema-row--trailing">
                     <button
                       type="button"
                       className="btn btn--ghost btn--xs postgres-data-browser__schema-reload-btn"
-                      title="Reload schemas, table list, and data from page 1"
+                      title="Reload databases, table list, and data from page 1"
                       aria-label="Reload all"
                       disabled={refreshBusy || schemasLoading || tablesLoading}
                       onClick={() => void reloadAll()}
@@ -782,9 +788,9 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
               ) : (
                 <div className="postgres-data-browser__schema-row">
                   <select
-                    id="pg-schema-select"
+                    id="mysql-db-select"
                     className="postgres-data-browser__schema-select"
-                    aria-label="Database schema"
+                    aria-label="MySQL database"
                     value={selectedSchema ?? schemas[0] ?? ''}
                     onChange={(e) => setSelectedSchema(e.target.value || null)}
                   >
@@ -797,7 +803,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
                   <button
                     type="button"
                     className="btn btn--ghost btn--xs postgres-data-browser__schema-reload-btn"
-                    title="Reload schemas, table list, and data from page 1"
+                    title="Reload databases, table list, and data from page 1"
                     aria-label="Reload all"
                     disabled={refreshBusy || schemasLoading || tablesLoading}
                     onClick={() => void reloadAll()}
@@ -809,7 +815,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
             </div>
             <div className="postgres-data-browser__section postgres-data-browser__section--tables">
               {!selectedSchema ? (
-                <p className="postgres-data-browser__muted">Choose a schema from the menu above.</p>
+                <p className="postgres-data-browser__muted">Choose a database from the menu above.</p>
               ) : tablesError ? (
                 <div className="host-editor__banner host-editor__banner--err postgres-data-browser__banner">
                   {tablesError}
@@ -820,7 +826,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
                   Loading tables…
                 </div>
               ) : tables.length === 0 ? (
-                <p className="postgres-data-browser__muted">No tables in this schema.</p>
+                <p className="postgres-data-browser__muted">No tables in this database.</p>
               ) : (
                 <>
                   <div className="postgres-data-browser__table-search">
@@ -871,7 +877,7 @@ export function PostgresDataBrowser({ connection }: { connection: DbConnection }
                 <div className="db-browser__empty-icon db-browser__empty-icon--grid" aria-hidden />
                 <p className="db-browser__empty-title">Select a table</p>
                 <p className="db-browser__empty-text">
-                  Pick a schema from the dropdown, then a table or view, to load rows. Base tables with a primary key
+                  Pick a database from the dropdown, then a table or view, to load rows. Base tables with a primary key
                   support in-cell editing (double-click a cell).
                 </p>
               </div>

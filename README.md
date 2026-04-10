@@ -188,22 +188,21 @@ cd dev-manager
 ```
 
 
-| Bun | npm |
-| --- | --- |
-|     |     |
-
+| pnpm (recommended) | npm |
+| ------------------ | --- |
+|                    |     |
 
 ```bash
-bun install
-bun run dev
+pnpm install
+pnpm dev
 ```
-
-
 
 ```bash
 npm install
 npm run dev
 ```
+
+(Bun works too: `bun install` / `bun run dev`.)
 
 
 
@@ -219,10 +218,10 @@ Then open **[http://localhost:9999](http://localhost:9999)** (see `vite.config.t
 
 | Command                               | What it does                                  |
 | ------------------------------------- | --------------------------------------------- |
-| `bun run dev` / `npm run dev`         | Dev server + APIs + terminal WebSocket        |
-| `bun run build` / `npm run build`     | `tsc -b` then Vite production build → `dist/` |
-| `bun run preview` / `npm run preview` | Static preview; plugins still attach          |
-| `bun run lint` / `npm run lint`       | ESLint across the repo                        |
+| `pnpm dev` / `npm run dev`             | Dev server + APIs + terminal WebSocket        |
+| `pnpm build` / `npm run build`         | `tsc -b` then Vite production build → `dist/` |
+| `pnpm preview` / `npm run preview`     | Static preview; plugins still attach          |
+| `pnpm lint` / `npm run lint`           | ESLint across the repo                        |
 
 
   
@@ -286,11 +285,11 @@ Without native **node-pty**, the app falls back to a **piped** shell — enough 
 
 ```bash
 sudo apt install build-essential
-bun add node-pty
-bun run dev
+pnpm add node-pty
+pnpm dev
 ```
 
-> On macOS, install **Xcode Command Line Tools** before `bun add node-pty`.
+> On macOS, install **Xcode Command Line Tools** before `pnpm add node-pty`.
 
   
 
@@ -337,7 +336,7 @@ We love thoughtful PRs.
 
 1. **Fork** [mj-manna/dev-manager](https://github.com/mj-manna/dev-manager)
 2. Branch from `main` — `feat/…`, `fix/…`, or `chore/…`
-3. `**bun run lint`** (or `npm run lint`) — keep the tree green
+3. `pnpm lint` (or `npm run lint`) — keep the tree green
 4. Open a PR with a **clear description** and, when relevant, **screenshots** or **screen recordings**
 
   

@@ -10,14 +10,19 @@ import {
   useLocation,
   useParams,
 } from 'react-router-dom'
+import { DockerPanel } from './components/DockerPanel'
 import { HostEditor } from './components/HostEditor'
 import { ApachePanel } from './components/ApachePanel'
 import { NginxPanel } from './components/NginxPanel'
+import { DatabaseServersIndex, DatabaseServersLayout } from './components/DatabaseServersLayout'
+import { MysqlLocalAdminPanel } from './components/MysqlLocalAdminPanel'
 import { DatabaseTabsLayout } from './components/DatabaseTabsLayout'
 import { PostgresLocalAdminPanel } from './components/PostgresLocalAdminPanel'
+import { DeploymentPage } from './components/DeploymentPage'
 import { DeploymentsPanel } from './components/DeploymentsPanel'
 import { HeaderJobsMenu } from './components/HeaderJobsMenu'
 import { SettingsPage } from './components/SettingsPage'
+import { WorkspaceScopeBar } from './components/WorkspaceScopeBar'
 import { useTerminal } from './terminal/TerminalContext'
 import './App.css'
 import { getConnectionById } from './database/connectionsStorage'
@@ -28,6 +33,7 @@ import {
   setStoredThemePreference,
   type ThemePreference,
 } from './theme/themePreference'
+import { applyUiPreferences, UI_PREFERENCES_CHANGED_EVENT } from './theme/uiPreferences'
 
 const SIDEBAR_COLLAPSED_KEY = 'dev-manager-sidebar-collapsed'
 
@@ -69,25 +75,28 @@ const navGroups: readonly NavGroup[] = [
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
       { id: 'projects', label: 'Projects', icon: 'folder' },
-      { id: 'deployments', label: 'Deployments', icon: 'rocket' },
-    ],
-  },
-  {
-    label: 'Environment',
-    items: [{ id: 'environment-host', label: 'Host', icon: 'file-lines' }],
-  },
-  {
-    label: 'Web Server',
-    items: [
-      { id: 'nginx', label: 'Nginx', icon: 'server' },
-      { id: 'apache', label: 'Apache', icon: 'server' },
+      { id: 'deployment', label: 'Deployment', icon: 'rocket' },
     ],
   },
   {
     label: 'Database',
     items: [
       { id: 'database', label: 'Connections', icon: 'database' },
-      { id: 'database-config', label: 'PG server', icon: 'sliders' },
+      { id: 'database-config', label: 'Server', icon: 'server' },
+    ],
+  },
+  {
+    label: 'Environment',
+    items: [
+      { id: 'environment-host', label: 'Host', icon: 'file-lines' },
+      { id: 'docker', label: 'Docker', icon: 'docker' },
+    ],
+  },
+  {
+    label: 'Web Server',
+    items: [
+      { id: 'nginx', label: 'Nginx', icon: 'server' },
+      { id: 'apache', label: 'Apache', icon: 'server' },
     ],
   },
   {
@@ -104,14 +113,21 @@ const pageMeta: Record<string, { title: string; sub: string }> = {
     title: 'Dashboard',
     sub: 'Overview of your environments and releases',
   },
-  projects: { title: 'Projects', sub: 'Repositories and workspaces' },
-  deployments: {
-    title: 'Deployments',
-    sub: 'Profiles, projects, and integrated terminal',
+  projects: {
+    title: 'Projects',
+    sub: 'Workspaces, local projects, and integrated terminal',
+  },
+  deployment: {
+    title: 'Deployment',
+    sub: 'Reserved for deployment workflows',
   },
   'environment-host': {
     title: 'Environment',
     sub: 'Local hosts file — edit and reload',
+  },
+  docker: {
+    title: 'Docker',
+    sub: 'Engine status, containers — start, stop, and restart',
   },
   nginx: {
     title: 'Web Server',
@@ -126,8 +142,8 @@ const pageMeta: Record<string, { title: string; sub: string }> = {
     sub: 'Redis, MySQL, and PostgreSQL connections',
   },
   'database-config': {
-    title: 'PostgreSQL server',
-    sub: 'Manage local databases, roles, CONNECT grants, and passwords',
+    title: 'Server',
+    sub: 'PostgreSQL, MySQL, and other database servers',
   },
   team: { title: 'Team', sub: 'Members and access' },
   settings: { title: 'Settings', sub: 'Application preferences' },
@@ -136,27 +152,26 @@ const pageMeta: Record<string, { title: string; sub: string }> = {
 const navItemPath: Record<string, string> = {
   dashboard: '/dashboard',
   projects: '/projects',
-  deployments: '/deployments',
+  deployment: '/deployment',
   'environment-host': '/environment-host',
+  docker: '/docker',
   nginx: '/nginx',
   apache: '/apache',
   database: '/database',
-  'database-config': '/database/postgresql-admin',
+  'database-config': '/database/servers',
   team: '/team',
   settings: '/settings',
 }
 
-/** Connections: list + Redis/PG browsers — not PG server admin (separate nav item). */
+/** Connections: list + DB browsers — not Server hub (separate nav item). */
 function sidebarNavItemIsActive(itemId: string, pathname: string): boolean {
   const to = navItemPath[itemId] ?? '/dashboard'
   if (itemId === 'database') {
-    if (pathname === '/database/postgresql-admin' || pathname.startsWith('/database/postgresql-admin/')) {
-      return false
-    }
+    if (pathname.startsWith('/database/servers')) return false
     return matchPath({ path: '/database', end: false }, pathname) != null
   }
   if (itemId === 'database-config') {
-    return matchPath({ path: '/database/postgresql-admin', end: true }, pathname) != null
+    return matchPath({ path: '/database/servers', end: false }, pathname) != null
   }
   return matchPath({ path: to, end: true }, pathname) != null
 }
@@ -188,20 +203,36 @@ function headerForPath(pathname: string, search: string): { title: string; sub: 
       if (c?.kind === 'postgresql') {
         return { title: 'PostgreSQL data', sub: 'Browse schemas, tables, and rows on this connection' }
       }
+      if (c?.kind === 'mysql') {
+        return { title: 'MySQL data', sub: 'Browse databases, tables, and rows on this connection' }
+      }
     }
   }
-  if (pathname.startsWith('/database/postgresql-admin')) {
+  if (pathname.startsWith('/database/servers')) {
+    if (pathname.includes('/postgresql')) {
+      return {
+        title: 'PostgreSQL',
+        sub: 'Databases, roles, CONNECT grants, and passwords on your host',
+      }
+    }
+    if (pathname.includes('/mysql')) {
+      return {
+        title: 'MySQL',
+        sub: 'Databases, accounts, grants, and passwords on your host',
+      }
+    }
     return pageMeta['database-config']
   }
   const keyByPath: Record<string, keyof typeof pageMeta> = {
     '/dashboard': 'dashboard',
     '/projects': 'projects',
-    '/deployments': 'deployments',
+    '/deployment': 'deployment',
     '/environment-host': 'environment-host',
+    '/docker': 'docker',
     '/nginx': 'nginx',
     '/apache': 'apache',
     '/database': 'database',
-    '/database/postgresql-admin': 'database-config',
+    '/database/servers': 'database-config',
     '/team': 'team',
     '/settings': 'settings',
   }
@@ -209,7 +240,7 @@ function headerForPath(pathname: string, search: string): { title: string; sub: 
   return pageMeta[k] ?? pageMeta.dashboard
 }
 
-/** Old paths `/database/redis/:id` and `/database/postgresql/:id` → `/database?tab=:id`. */
+/** Old paths `/database/redis|postgresql|mysql/:id` → `/database?tab=:id`. */
 function LegacyDbBrowserRedirect() {
   const { connectionId } = useParams<{ connectionId: string }>()
   if (connectionId == null || connectionId === '') {
@@ -282,6 +313,13 @@ function NavIcon({ name }: { name: string }) {
         <svg {...common} viewBox="0 0 24 24" aria-hidden>
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+        </svg>
+      )
+    case 'docker':
+      return (
+        <svg {...common} viewBox="0 0 24 24" aria-hidden>
+          <path d="M4 8h2v2H4V8zm4 0h2v2H8V8zm4 0h2v2h-2V8zm-8 4h2v2H4v-2zm4 0h2v2H8v-2zm4 0h2v2h-2v-2z" />
+          <path d="M4 16v1a3 3 0 0 0 3 3h6l3 3v-3h2a3 3 0 0 0 3-3v-1H4z" />
         </svg>
       )
     case 'server':
@@ -399,6 +437,16 @@ function AdminLayout() {
   }, [themePreference])
 
   useEffect(() => {
+    applyUiPreferences()
+  }, [])
+
+  useEffect(() => {
+    const sync = () => applyUiPreferences()
+    window.addEventListener(UI_PREFERENCES_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(UI_PREFERENCES_CHANGED_EVENT, sync)
+  }, [])
+
+  useEffect(() => {
     if (themePreference !== 'system') return
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const sync = () => applyThemePreference('system')
@@ -471,13 +519,7 @@ function AdminLayout() {
           ))}
         </nav>
         <div className="admin__sidebar-footer">
-          <div className="admin__user-pill">
-            <span className="admin__avatar" aria-hidden>AK</span>
-            <div className="admin__user-pill-text">
-              <div className="admin__user-name">Alex Kim</div>
-              <div className="admin__user-role">Admin</div>
-            </div>
-          </div>
+          <WorkspaceScopeBar variant="sidebar" />
         </div>
       </aside>
 
@@ -588,15 +630,23 @@ export default function App() {
       <Route path="/" element={<AdminLayout />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardHome />} />
-        <Route path="projects" element={<DashboardHome />} />
-        <Route path="deployments" element={<DeploymentsPanel />} />
+        <Route path="projects" element={<DeploymentsPanel />} />
+        <Route path="deployment" element={<DeploymentPage />} />
+        <Route path="deployments" element={<Navigate to="/projects" replace />} />
         <Route path="environment-host" element={<HostEditor />} />
+        <Route path="docker" element={<DockerPanel />} />
         <Route path="nginx" element={<NginxPanel />} />
         <Route path="apache" element={<ApachePanel />} />
         <Route path="database/redis/:connectionId" element={<LegacyDbBrowserRedirect />} />
         <Route path="database/postgresql/:connectionId" element={<LegacyDbBrowserRedirect />} />
+        <Route path="database/mysql/:connectionId" element={<LegacyDbBrowserRedirect />} />
         <Route path="database" element={<DatabaseTabsLayout />} />
-        <Route path="database/postgresql-admin" element={<PostgresLocalAdminPanel />} />
+        <Route path="database/servers" element={<DatabaseServersLayout />}>
+          <Route index element={<DatabaseServersIndex />} />
+          <Route path="postgresql" element={<PostgresLocalAdminPanel />} />
+          <Route path="mysql" element={<MysqlLocalAdminPanel />} />
+        </Route>
+        <Route path="database/postgresql-admin" element={<Navigate to="/database/servers/postgresql" replace />} />
         <Route path="team" element={<DashboardHome />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -9,6 +9,7 @@ import {
   type OpenConnTab,
 } from '../database/openTabsStorage'
 import { DatabaseConnectionsPanel } from './DatabaseConnectionsPanel'
+import { MysqlBrowserPage } from './MysqlBrowserPage'
 import { PostgresBrowserPage } from './PostgresBrowserPage'
 import { RedisBrowserPage } from './RedisBrowserPage'
 
@@ -39,7 +40,7 @@ function resolveRoute(search: string): { type: 'list' } | { type: 'conn'; tab: O
   const tabId = q.get(TAB_PARAM)
   if (!tabId) return { type: 'list' }
   const conn = getConnectionById(tabId)
-  if (!conn || (conn.kind !== 'postgresql' && conn.kind !== 'redis')) {
+  if (!conn || (conn.kind !== 'postgresql' && conn.kind !== 'redis' && conn.kind !== 'mysql')) {
     return { type: 'list' }
   }
   let inst = q.get(INST_PARAM)?.trim() ?? ''
@@ -172,7 +173,7 @@ export function DatabaseTabsLayout() {
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  title={`${label} (${t.kind === 'postgresql' ? 'PostgreSQL' : 'Redis'})`}
+                  title={`${label} (${t.kind === 'postgresql' ? 'PostgreSQL' : t.kind === 'mysql' ? 'MySQL' : 'Redis'})`}
                   className="database-tab database-tab--conn"
                   onClick={() => navigate(tabHref(t))}
                 >
@@ -209,6 +210,8 @@ export function DatabaseTabsLayout() {
           <DatabaseConnectionsPanel />
         ) : route.tab.kind === 'postgresql' ? (
           <PostgresBrowserPage key={route.tab.inst} connectionId={route.tab.id} />
+        ) : route.tab.kind === 'mysql' ? (
+          <MysqlBrowserPage key={route.tab.inst} connectionId={route.tab.id} />
         ) : (
           <RedisBrowserPage key={route.tab.inst} connectionId={route.tab.id} />
         )}
