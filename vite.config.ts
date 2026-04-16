@@ -14,12 +14,14 @@ import { mysqlAdminApiPlugin } from './vite-plugin-mysql-admin-api'
 import { linuxAutostartApiPlugin } from './vite-plugin-linux-autostart-api'
 import { deploymentsPackageApiPlugin } from './vite-plugin-deployments-package-api'
 import { dockerApiPlugin } from './vite-plugin-docker-api'
+import { pm2ApiPlugin } from './vite-plugin-pm2-api'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     babel({ presets: [reactCompilerPreset()] }),
+    pm2ApiPlugin(),
     hostsApiPlugin(),
     nginxApiPlugin(),
     apacheApiPlugin(),

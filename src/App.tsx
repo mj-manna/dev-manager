@@ -11,6 +11,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import { DockerPanel } from './components/DockerPanel'
+import { Pm2Panel } from './components/Pm2Panel'
 import { HostEditor } from './components/HostEditor'
 import { ApachePanel } from './components/ApachePanel'
 import { NginxPanel } from './components/NginxPanel'
@@ -90,6 +91,7 @@ const navGroups: readonly NavGroup[] = [
     items: [
       { id: 'environment-host', label: 'Host', icon: 'file-lines' },
       { id: 'docker', label: 'Docker', icon: 'docker' },
+      { id: 'pm2', label: 'PM2', icon: 'pm2' },
     ],
   },
   {
@@ -129,6 +131,10 @@ const pageMeta: Record<string, { title: string; sub: string }> = {
     title: 'Docker',
     sub: 'Engine status, containers — start, stop, and restart',
   },
+  pm2: {
+    title: 'PM2',
+    sub: 'Running apps — stop, reload, restart, and restart all',
+  },
   nginx: {
     title: 'Web Server',
     sub: 'Nginx — install, virtual hosts, test and restart',
@@ -155,6 +161,7 @@ const navItemPath: Record<string, string> = {
   deployment: '/deployment',
   'environment-host': '/environment-host',
   docker: '/docker',
+  pm2: '/pm2',
   nginx: '/nginx',
   apache: '/apache',
   database: '/database',
@@ -229,6 +236,7 @@ function headerForPath(pathname: string, search: string): { title: string; sub: 
     '/deployment': 'deployment',
     '/environment-host': 'environment-host',
     '/docker': 'docker',
+    '/pm2': 'pm2',
     '/nginx': 'nginx',
     '/apache': 'apache',
     '/database': 'database',
@@ -320,6 +328,15 @@ function NavIcon({ name }: { name: string }) {
         <svg {...common} viewBox="0 0 24 24" aria-hidden>
           <path d="M4 8h2v2H4V8zm4 0h2v2H8V8zm4 0h2v2h-2V8zm-8 4h2v2H4v-2zm4 0h2v2H8v-2zm4 0h2v2h-2v-2z" />
           <path d="M4 16v1a3 3 0 0 0 3 3h6l3 3v-3h2a3 3 0 0 0 3-3v-1H4z" />
+        </svg>
+      )
+    case 'pm2':
+      return (
+        <svg {...common} viewBox="0 0 24 24" aria-hidden>
+          <rect x="3" y="4" width="18" height="5" rx="1" />
+          <rect x="3" y="11" width="18" height="5" rx="1" />
+          <rect x="3" y="18" width="18" height="3" rx="1" />
+          <path d="M7 6.5h2M7 13.5h2" strokeDasharray="1 2" />
         </svg>
       )
     case 'server':
@@ -635,6 +652,7 @@ export default function App() {
         <Route path="deployments" element={<Navigate to="/projects" replace />} />
         <Route path="environment-host" element={<HostEditor />} />
         <Route path="docker" element={<DockerPanel />} />
+        <Route path="pm2" element={<Pm2Panel />} />
         <Route path="nginx" element={<NginxPanel />} />
         <Route path="apache" element={<ApachePanel />} />
         <Route path="database/redis/:connectionId" element={<LegacyDbBrowserRedirect />} />
