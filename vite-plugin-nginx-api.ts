@@ -31,8 +31,19 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 const SAFE_NAME = /^[a-zA-Z0-9._-]+$/
 
-/** Matches vite.config.ts `allowedHosts` default for local proxy hints. */
+/** Default hostname when the vhost id cannot yield a sensible server_name. */
 export const DEV_MANAGER_LOCAL_HOSTNAME = 'dev-manager.test'
+
+/** Derive a per-vhost hostname for local proxy + TLS (basename without .conf). */
+function deriveLocalProxyServerNameFromVhostId(vhostId: string): string {
+  const trimmed = vhostId.trim()
+  let base = trimmed.endsWith('.conf') ? trimmed.slice(0, -'.conf'.length) : trimmed
+  base = base.trim()
+  if (!base || !SAFE_NAME.test(base)) {
+    return DEV_MANAGER_LOCAL_HOSTNAME
+  }
+  return base
+}
 
 function defaultViteDevPort(): number {
   const p = Number(process.env.PORT)
@@ -334,16 +345,17 @@ async function resolveLocalProxyInstallScript(reqUrl: string): Promise<LocalProx
         'This file already includes Dev Manager local HTTP and HTTPS blocks (markers present).',
     }
   }
+  const serverName = deriveLocalProxyServerNameFromVhostId(trimmed)
   const script = buildSelectedVhostHttpsInstallScript(
     root,
     targetAbsPath,
-    DEV_MANAGER_LOCAL_HOSTNAME,
+    serverName,
     upstream,
   )
   return {
     outcome: 'script',
     script,
-    hostsLine: `127.0.0.1 ${DEV_MANAGER_LOCAL_HOSTNAME}`,
+    hostsLine: `127.0.0.1 ${serverName}`,
     vhostId: trimmed,
   }
 }

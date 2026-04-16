@@ -174,7 +174,10 @@ export function DatabaseConnectionsPanel() {
           }
           return next
         })
-        notifyAppStorageChanged()
+        // Do not call notifyAppStorageChanged() here: memory is updated in useEffect via
+        // saveConnections(); an immediate notify would run STORAGE_CHANGED sync listeners
+        // (including this panel) before that, so loadConnections() still sees old data and
+        // overwrites this edit.
         closeModal()
         setBanner({ type: 'ok', text: 'Updated.' })
         return

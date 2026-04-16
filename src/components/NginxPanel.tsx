@@ -678,7 +678,7 @@ export function NginxPanel() {
                 <button
                   type="button"
                   className="btn btn--secondary nginx-editor__install"
-                  title="Local dev only: append HTTP/HTTPS for dev-manager.test → Vite. Installs mkcert via apt/brew/etc. if missing, runs mkcert -install, creates TLS, reloads nginx. Falls back to openssl if mkcert cannot be installed. Uses sudo in the terminal."
+                  title="Local dev only: append HTTP/HTTPS using a hostname from the selected file name (e.g. myapp.test.conf becomes myapp.test), proxying to Vite. TLS files are per hostname under the nginx ssl/ directory. Installs mkcert when missing, runs mkcert -install, reloads nginx; falls back to openssl. Uses sudo in the terminal."
                   onClick={() => void runNginxLocalProxyInstall()}
                 >
                   Install HTTPS

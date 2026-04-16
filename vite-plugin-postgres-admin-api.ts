@@ -1,4 +1,4 @@
-import { Client } from 'pg'
+import { Client, escapeLiteral } from 'pg'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Connect } from 'vite'
 
@@ -82,6 +82,11 @@ function assertIdent(name: unknown, label: string): string {
 
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`
+}
+
+/** PASSWORD must be a SQL literal — not `$1` (unsupported in these statements). */
+function passwordLiteral(pwd: string): string {
+  return escapeLiteral(pwd)
 }
 
 async function handleOverview(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -204,7 +209,9 @@ async function handleCreateRole(req: IncomingMessage, res: ServerResponse): Prom
     await withPgClient(conn, async (c) => {
       const qn = quoteIdent(roleName)
       if (login) {
-        await c.query(`CREATE ROLE ${qn} WITH LOGIN PASSWORD $1`, [pwd])
+        await c.query({
+          text: `CREATE ROLE ${qn} WITH LOGIN PASSWORD ${passwordLiteral(pwd)}`,
+        })
       } else {
         await c.query(`CREATE ROLE ${qn}`)
       }
@@ -246,7 +253,9 @@ async function handleAlterPassword(req: IncomingMessage, res: ServerResponse): P
   }
   try {
     await withPgClient(conn, async (c) => {
-      await c.query(`ALTER ROLE ${quoteIdent(roleName)} WITH PASSWORD $1`, [pwd])
+      await c.query({
+        text: `ALTER ROLE ${quoteIdent(roleName)} WITH PASSWORD ${passwordLiteral(pwd)}`,
+      })
     })
     sendJson(res, 200, { ok: true })
   } catch (e) {
